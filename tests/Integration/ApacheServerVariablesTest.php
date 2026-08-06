@@ -67,6 +67,38 @@ final class ApacheServerVariablesTest extends HttpTestCase
         yield 'php-fpm with rewrite' => ['rewrite', [
             'REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::HOST_TOKEN,
         ]];
+
+        // Legacy php-cgi behind mod_cgi or mod_cgid. Captured from a real
+        // Apache running the CGI SAPI: the Action directive performs an
+        // internal redirect, which is why so much arrives duplicated under a
+        // REDIRECT_ prefix.
+        yield 'legacy php-cgi' => ['cgi', [
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::HOST_TOKEN,
+            'REDIRECT_HTTP_AUTHORIZATION' => 'Bearer ' . self::HOST_TOKEN,
+            'REDIRECT_STATUS' => '200',
+            'REDIRECT_HANDLER' => 'application/x-httpd-php',
+            'REDIRECT_URL' => '/v1/hosts/home',
+            'ORIG_PATH_INFO' => '/index.php',
+            'ORIG_SCRIPT_NAME' => '/cgi-bin/php',
+            'SCRIPT_NAME' => '/index.php',
+        ]];
+    }
+
+    /**
+     * Under CGI the Action directive redirects internally, so `SetEnv` values
+     * arrive both plainly and REDIRECT_-prefixed. Bootstrap reads the plain
+     * name, which Apache does still set - verified against a real php-cgi.
+     */
+    public function testCgiStillExposesConfigurationEnvironmentVariables(): void
+    {
+        $response = $this->handleWith([
+            'HTTP_AUTHORIZATION' => 'Bearer ' . self::HOST_TOKEN,
+            'REDIRECT_STATUS' => '200',
+            'DDNS_LOG_LEVEL' => 'ERROR',
+            'REDIRECT_DDNS_LOG_LEVEL' => 'ERROR',
+        ]);
+
+        self::assertSame(200, $response->getStatusCode());
     }
 
     /**

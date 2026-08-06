@@ -249,6 +249,68 @@ or load balancer — and then only with that thing's address ranges.
 it. If nothing does, run the CLI alongside it with a systemd timer, or a unit
 running `ddns watch --all`.
 
+#### Legacy CGI
+
+Older shared hosting often runs PHP as a CGI binary rather than through FPM.
+That works, and for this application it is a perfectly reasonable choice: CGI
+forks a PHP process per request, which would be hopeless for a busy site but is
+irrelevant for an endpoint a router calls a few times a day.
+
+If your host already runs PHP as CGI, **the shipped `public/.htaccess` is
+enough** — point the document root at `public/` and there is nothing else to
+do. The header workaround in it covers CGI as well as FPM.
+
+To configure it yourself:
+
+```apache
+# Prefork MPM uses mod_cgi; the event and worker MPMs need mod_cgid instead.
+LoadModule cgid_module modules/mod_cgid.so
+
+ScriptAlias /cgi-bin/ /usr/lib/cgi-bin/
+Action application/x-httpd-php /cgi-bin/php-cgi
+AddType application/x-httpd-php .php
+
+<Directory /usr/lib/cgi-bin>
+    Require all granted
+    Options +ExecCGI
+
+    # CGIPassAuth belongs *here*, in the directory holding the CGI binary —
+    # not in the document root, where it silently does nothing. Apache 2.4.13+.
+    CGIPassAuth On
+</Directory>
+
+<Directory /srv/ddns/public>
+    AllowOverride None
+    Require all granted
+    Options -Indexes +FollowSymLinks
+
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</Directory>
+```
+
+> **`CGIPassAuth On` placement is the trap here.** Putting it in the document
+> root's `<Directory>` — the intuitive place, and what most advice implies —
+> leaves Bearer tokens being dropped and every request returning `401`. It has
+> to be in the `<Directory>` containing the CGI binary. At server level Apache
+> refuses to start at all, with `CGIPassAuth not allowed here`.
+>
+> If your Apache predates 2.4.13, or you would rather not think about it, the
+> `SetEnvIf` / `RewriteRule` workaround in `public/.htaccess` achieves the same
+> thing and works everywhere.
+
+Two other things worth knowing about CGI:
+
+- **`Action` performs an internal redirect**, so anything set with `SetEnv`
+  arrives twice — as `DDNS_CONFIG` and again as `REDIRECT_DDNS_CONFIG`. The
+  plain name is still set, so `SetEnv DDNS_CONFIG …` works as it does elsewhere.
+- **Keep `Options +ExecCGI` scoped to `cgi-bin`.** `public/` holds no scripts
+  Apache should execute and needs no `ExecCGI` of its own. PHP's
+  `cgi.force_redirect`, on by default, separately refuses to run the binary
+  when it is requested directly.
+
 ## Configuration
 
 One YAML file is the entire source of truth. `${VAR}` and `${VAR:-default}` are
