@@ -17,3 +17,7 @@
 /.vscode/
 .DS_Store
 *.swp
+
+# An optional local copy of the Swagger UI assets, installed by whoever would
+# rather no browser of theirs fetched them from a CDN. Not ours to ship.
+/public/vendor/

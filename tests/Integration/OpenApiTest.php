@@ -26,6 +26,19 @@ use Symfony\Component\Yaml\Yaml;
 #[CoversNothing]
 final class OpenApiTest extends HttpTestCase
 {
+    /**
+     * Routes that exist but are not API surface.
+     *
+     * The static assets behind the documentation page are served over HTTP but
+     * are not something a client would ever call deliberately, and listing
+     * them as an operation would put a stylesheet in the middle of the API
+     * description. Kept as an explicit list rather than a pattern, so adding
+     * to it is a decision somebody makes rather than one that happens.
+     *
+     * @var list<string>
+     */
+    private const NOT_API_SURFACE = ['get /vendor/swagger-ui/{file}'];
+
     #[Test]
     public function it_is_served_as_json(): void
     {
@@ -111,6 +124,10 @@ final class OpenApiTest extends HttpTestCase
         $documented = $this->documentedOperations();
 
         foreach ($this->registeredOperations() as $operation) {
+            if (in_array($operation, self::NOT_API_SURFACE, true)) {
+                continue;
+            }
+
             self::assertContains($operation, $documented, sprintf(
                 '%s is routed but missing from the OpenAPI document.',
                 $operation,
@@ -129,6 +146,19 @@ final class OpenApiTest extends HttpTestCase
         foreach ($this->documentedOperations() as $operation) {
             self::assertContains($operation, $registered, sprintf(
                 '%s is documented but not routed.',
+                $operation,
+            ));
+        }
+    }
+
+    #[Test]
+    public function the_exemptions_are_all_still_routed(): void
+    {
+        // An exemption for a route that no longer exists is a licence for the
+        // next one with that name to go undocumented.
+        foreach (self::NOT_API_SURFACE as $operation) {
+            self::assertContains($operation, $this->registeredOperations(), sprintf(
+                '%s is exempted from documentation but is not routed.',
                 $operation,
             ));
         }

@@ -153,6 +153,9 @@ To serve HTTP, point any web server at `public/`:
 php -S 0.0.0.0:8080 -t public public/index.php
 ```
 
+Then open <http://localhost:8080/> — it redirects to the
+[browsable API documentation](#openapi).
+
 > The built-in server is single-threaded. It is fine for a DDNS endpoint
 > receiving a handful of requests a day, but use a real web server for anything
 > else — see [Apache](#apache) below, or put nginx or Caddy in front for TLS.
@@ -604,6 +607,8 @@ $ ddns config:validate
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
+| `GET` | `/` | none | Temporary redirect to `/api` |
+| `GET` | `/api` | none | [Browsable documentation](#openapi) |
 | `GET` | `/health` | none | Liveness probe |
 | `GET` | `/openapi.json` | none | [OpenAPI description](#openapi) |
 | `GET` | `/openapi.yaml` | none | The same, as YAML |
@@ -612,8 +617,12 @@ $ ddns config:validate
 
 ### OpenAPI
 
-Every endpoint is described by an OpenAPI 3.1 document the server publishes
-about itself:
+Open **`/api`** in a browser. The server renders its own API description with
+Swagger UI, and the endpoints can be called from the page — press *Authorize*,
+paste a host token, and *Execute*. The root redirects there, temporarily, so
+there is something to find at the bare hostname.
+
+The description itself is served as a document too:
 
 ```console
 $ curl https://ddns.example.com/openapi.json
@@ -639,12 +648,39 @@ actually registers, in both directions, and the documented response shapes
 against real responses. A documented endpoint that stopped existing, or a field
 that was renamed, fails the build.
 
-It is served without authentication. It describes shapes and status codes —
-everything on this page — and holds no configuration, no host names and no
-secrets. To withhold it anyway, deny the two paths at the web server:
+#### Where Swagger UI comes from
+
+The page loads Swagger UI from a CDN, pinned to an exact version and carrying a
+[subresource integrity](https://developer.mozilla.org/docs/Web/Security/Subresource_Integrity)
+hash, so a browser will refuse to run anything but the bytes this project
+checked — the same reasoning as the pinned `composer.lock`.
+
+To keep every request on your own network, or to serve the page on a host with
+no route to the internet, drop the assets into `public/vendor/swagger-ui/` and
+they are used instead. No configuration, and the content security policy tightens
+to `'self'` automatically:
+
+```bash
+mkdir -p public/vendor/swagger-ui && cd $_
+V=5.32.12
+curl -O "https://cdn.jsdelivr.net/npm/swagger-ui-dist@$V/swagger-ui.css"
+curl -O "https://cdn.jsdelivr.net/npm/swagger-ui-dist@$V/swagger-ui-bundle.js"
+```
+
+Both files must be present; a half-finished copy falls back to the CDN rather
+than serving a page with no styles. The directory is gitignored, and the
+application serves the files itself where the web server does not — PHP's
+built-in server hands every request to the router script, so the Docker image
+and the quick start work the same way as Apache or nginx.
+
+#### Withholding the documentation
+
+Everything above is served without authentication. It describes shapes and
+status codes — all of it on this page — and holds no configuration, no host
+names and no secrets. To withhold it anyway, deny the paths at the web server:
 
 ```apache
-<LocationMatch "^/openapi\.(json|yaml)$">
+<LocationMatch "^/(api|openapi\.(json|yaml))$">
     Require all denied
 </LocationMatch>
 ```

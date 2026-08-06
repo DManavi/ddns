@@ -131,6 +131,8 @@ final class OpenApiDocument
     private function paths(): array
     {
         return [
+            '/' => ['get' => $this->root()],
+            '/api' => ['get' => $this->docs()],
             '/health' => ['get' => $this->health()],
             '/openapi.json' => ['get' => $this->openapi('json')],
             '/openapi.yaml' => ['get' => $this->openapi('yaml')],
@@ -142,6 +144,53 @@ final class OpenApiDocument
                 'parameters' => [$this->hostParameter()],
                 'get' => $this->update('get'),
                 'post' => $this->update('post'),
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function root(): array
+    {
+        return [
+            'operationId' => 'root',
+            'tags' => ['Service'],
+            'summary' => 'Redirect to the documentation.',
+            'description' => 'Nothing is served at the root, and a browser arriving there is looking for the '
+                . 'documentation. Temporary rather than permanent, so the root stays free for something else later.',
+            'security' => [],
+            'responses' => [
+                '302' => [
+                    'description' => 'Redirect to `/api`.',
+                    'headers' => [
+                        'Location' => [
+                            'description' => 'The documentation, as a path relative to this server.',
+                            'schema' => ['type' => 'string', 'example' => '/api'],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function docs(): array
+    {
+        return [
+            'operationId' => 'docs',
+            'tags' => ['Service'],
+            'summary' => 'This description, rendered with Swagger UI.',
+            'description' => 'A browsable version of the OpenAPI document, from which the API can also be called. '
+                . 'The page holds no documentation of its own - it reads `/openapi.json`.',
+            'security' => [],
+            'responses' => [
+                '200' => [
+                    'description' => 'The documentation page.',
+                    'content' => ['text/html' => ['schema' => ['type' => 'string']]],
+                ],
             ],
         ];
     }
