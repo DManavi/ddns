@@ -1,0 +1,42 @@
+# Apache configuration for shared hosting, where the virtual host cannot be
+# edited. Requires `AllowOverride All` (or at least FileInfo) on this directory.
+#
+# On a server you control, prefer putting the equivalent directives in the
+# virtual host and leaving `AllowOverride None` - Apache then skips the
+# per-request lookup for this file entirely. See the README.
+#
+# Inert on nginx, Caddy and in the Docker image, none of which read it.
+
+# Apache does not pass the Authorization header to PHP-FPM, so a Bearer token
+# would vanish and every update would come back 401. Copy it into an
+# environment variable PHP can see.
+#
+# Both forms are present because which modules a shared host loads varies.
+# Setting the same value twice is harmless.
+<IfModule mod_setenvif.c>
+    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Send anything that is not a real file to the front controller, so
+    # /v1/hosts/{host}/update reaches the router.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Without mod_rewrite only the bare path can work, and only for the front
+# controller itself.
+<IfModule !mod_rewrite.c>
+    DirectoryIndex index.php
+</IfModule>
+
+# This directory holds nothing but the front controller.
+<IfModule mod_autoindex.c>
+    Options -Indexes
+</IfModule>
