@@ -20,6 +20,8 @@
 #
 # A separate project name from compose.yaml, so a dev stack can never collide
 # with a production one on the same host.
+#
+# Requires Compose v2.24 or newer, for `env_file: required:`.
 
 name: ddns-dev
 

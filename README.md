@@ -67,6 +67,19 @@ Two stacks, one image:
 | `compose.yaml` | Production — hardened, restart policies, no source mounts |
 | `compose.dev.yaml` | Development — source bind-mounted, dev dependencies, toolchain |
 
+Requires **Compose v2.24 or newer** (for `env_file: required:`), invoked as
+`docker compose`. The standalone `docker-compose` v1 reached end of life in
+July 2023 and cannot parse these files.
+
+> **On the file names.** `compose.yaml` is the canonical name in the
+> [Compose Specification][spec]; Docker's docs list it as *preferred* and treat
+> `docker-compose.yml` as supported only "for backwards compatibility of
+> earlier versions"[^compose-naming]. Compose finds `compose.yaml` by default,
+> which is why the production commands below need no `-f`.
+
+[spec]: https://github.com/compose-spec/compose-spec
+[^compose-naming]: [How Compose works — The Compose file](https://docs.docker.com/compose/intro/compose-application-model/)
+
 **Production:**
 
 ```bash
