@@ -48,7 +48,7 @@ makes a 60-second poll interval safe against provider rate limits.
 | `digitalocean` | Available | Domain Records API, fully paginated |
 | `vultr` | Available | DNS API v2, cursor pagination |
 | `cloudflare` | Available | API v4; zone IDs resolved once and cached |
-| `route53` | Not implemented | Registered and discoverable; needs AWS SigV4 |
+| `route53` | Available | AWS SDK for PHP; supports the full AWS credential chain |
 
 ```console
 $ ddns providers:list
@@ -195,8 +195,31 @@ hosts:
 | --- | --- | --- |
 | `driver` | yes | One of the drivers above |
 | `token` | yes | API credential |
-| `zone_id` | no | Cloudflare only: skip the zone lookup for a zone-scoped token |
+| `zone_id` | no | Cloudflare and Route53: skip the zone lookup for a scoped token |
 | `base_uri` | no | Override the API endpoint, mainly for testing |
+
+**Route53 specifics.** `token` is not required: with no credentials in the file
+the AWS default chain runs, picking them up from the environment,
+`~/.aws/credentials`, an EC2 instance profile, an ECS task role or IRSA — the
+recommended way to run on AWS.
+
+| Key | Meaning |
+| --- | --- |
+| `key` / `access_key_id` | Static access key. Falls back to the chain if absent |
+| `secret` / `secret_access_key` | Static secret. Both must be set, or neither |
+| `session_token` | For temporary STS credentials. `token` also works |
+| `profile` | Named profile from `~/.aws/credentials`. Ignored if `key` is set |
+| `region` | Defaults to `us-east-1`; only matters for GovCloud and China |
+| `zone_id` | Skip the zone lookup, for an IAM policy scoped to one zone |
+| `private_zone` | Manage the private hosted zone instead of the public one |
+
+The IAM policy needs `route53:ListHostedZonesByName`,
+`route53:ListResourceRecordSets` and `route53:ChangeResourceRecordSets`.
+`ListHostedZonesByName` can be omitted if `zone_id` is set.
+
+Route53 records are written with `UPSERT`, so create and update are the same
+call. The driver refuses to touch alias records and records that use a routing
+policy, rather than silently replacing a CloudFront or load balancer target.
 
 **`hosts.<name>`** — the key is used both as the URL segment and the CLI
 argument, so keep it URL-safe.
@@ -274,7 +297,7 @@ curl -H "Authorization: Bearer $TOKEN" '.../v1/hosts/home/update?dry_run=1'
 | `404` | No such endpoint, or the zone does not exist on the provider |
 | `422` | Malformed address, or a private address with `allow_private_ips: false` |
 | `429` | The provider is rate limiting us |
-| `501` | The configured driver is not implemented yet |
+| `501` | The driver's optional dependency is missing from this build |
 | `502` | The provider rejected our credentials or failed |
 
 ### Router setup
@@ -385,7 +408,8 @@ keeps the same use case usable from both front-ends.
    `updateRecord`. Use `Ddns\Provider\Http\RestClient` for transport and error
    mapping.
 2. Add a factory. Extend `BearerTokenProviderFactory` if the API takes a bearer
-   token.
+   token; implement `ProviderFactory` directly if it authenticates some other
+   way and return `false` from `requiresToken()`, as Route53 does.
 3. Register it in the `ProviderFactories` definition in `config/container.php`.
    The config validator picks up the new `driver:` value automatically.
 4. Add a test using `Ddns\Tests\Support\MockHttpClient`, following one of the

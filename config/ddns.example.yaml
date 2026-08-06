@@ -65,6 +65,35 @@ providers:
   #   # explicitly to skip the name-to-ID lookup.
   #   zone_id: ${CF_ZONE_ID}
 
+  # AWS Route53. Unlike the others this needs no `token`: when no credentials
+  # are given the AWS default chain runs, picking them up from the environment,
+  # ~/.aws/credentials, an EC2 instance profile, an ECS task role or IRSA.
+  # That is the recommended way to run on AWS - no long-lived keys in a file.
+  # aws-main:
+  #   driver: route53
+  #
+  #   # Optional: static credentials, if you are not running on AWS.
+  #   # key: ${AWS_ACCESS_KEY_ID}
+  #   # secret: ${AWS_SECRET_ACCESS_KEY}
+  #   # For temporary STS credentials, add the session token:
+  #   # session_token: ${AWS_SESSION_TOKEN}
+  #
+  #   # Optional: use a named profile from ~/.aws/credentials instead.
+  #   # Ignored if key/secret are set above.
+  #   # profile: personal
+  #
+  #   # Optional. Route53 is global, so this only matters for the GovCloud and
+  #   # China partitions. Defaults to us-east-1.
+  #   # region: us-east-1
+  #
+  #   # Optional. An IAM policy scoped to a single zone often cannot list
+  #   # zones, so give the ID explicitly to skip the name-to-ID lookup.
+  #   # zone_id: ${AWS_HOSTED_ZONE_ID}
+  #
+  #   # Optional. Manage a private hosted zone instead of the public one.
+  #   # In a split-horizon account the public zone is the usual target.
+  #   # private_zone: false
+
 # The hostnames kept in sync.
 #
 # The key is used both as the URL segment (/v1/hosts/<key>/update) and as the

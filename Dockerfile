@@ -17,6 +17,24 @@ RUN composer install \
         --optimize-autoloader \
     && composer clear-cache
 
+# aws-sdk-php ships API definitions for every AWS service - around 50MB for
+# 400-odd services this application never calls. Only Route53 is used, plus STS
+# and SSO, which the credential chain needs for assumed roles, IRSA and SSO
+# logins. Root-level manifests (endpoints, partitions) are left alone.
+#
+# The build verifies the result below, so if a future SDK needs something else
+# the image fails to build rather than shipping broken.
+RUN set -eux; \
+    data=/app/vendor/aws/aws-sdk-php/src/data; \
+    if [ -d "$data" ]; then \
+        for dir in "$data"/*/; do \
+            case "$(basename "$dir")" in \
+                route53|sts|sso|sso-oidc) ;; \
+                *) rm -rf "$dir" ;; \
+            esac; \
+        done; \
+    fi
+
 # --------------------------------------------------------------------- runtime
 FROM php:8.3-cli-alpine AS runtime
 
@@ -54,6 +72,12 @@ COPY --chown=ddns:ddns src ./src
 COPY --chown=ddns:ddns composer.json ./
 
 RUN chmod +x bin/ddns
+
+# Fails the build if the SDK trimming above removed something Route53 needs.
+RUN php -r 'require "vendor/autoload.php"; \
+    new Aws\Route53\Route53Client(["region" => "us-east-1", "version" => "2013-04-01", \
+        "credentials" => ["key" => "x", "secret" => "y"]]);' \
+    && php bin/ddns providers:list > /dev/null
 
 # Numeric rather than `ddns`, so an orchestrator can verify this is not root
 # without having to resolve a name from the image's passwd file.

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Ddns\Provider;
 
+use Ddns\Config\DriverCatalog;
+
 /**
  * The set of drivers this build knows about.
  *
@@ -37,6 +39,20 @@ final class ProviderFactories implements \IteratorAggregate, \Countable
     public function drivers(): array
     {
         return array_map(static fn (ProviderFactory $f): string => $f->driver(), $this->factories);
+    }
+
+    /**
+     * What the configuration loader needs to know about these drivers.
+     */
+    public function catalog(): DriverCatalog
+    {
+        $drivers = [];
+
+        foreach ($this->factories as $factory) {
+            $drivers[$factory->driver()] = $factory->requiresToken();
+        }
+
+        return DriverCatalog::of($drivers);
     }
 
     public function getIterator(): \Traversable

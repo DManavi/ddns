@@ -84,7 +84,7 @@ return [
 
     ConfigLoader::class => static fn (ContainerInterface $c): ConfigLoader => new ConfigLoader(
         Services::get($c, EnvInterpolator::class),
-        Services::get($c, ProviderFactories::class)->drivers(),
+        Services::get($c, ProviderFactories::class)->catalog(),
     ),
 
     Configuration::class => static fn (ContainerInterface $c): Configuration => Services::get($c, ConfigLoader::class)

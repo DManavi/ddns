@@ -6,6 +6,7 @@ namespace Ddns\Tests\Support;
 
 use Ddns\Config\ConfigLoader;
 use Ddns\Config\Configuration;
+use Ddns\Config\DriverCatalog;
 use Ddns\Config\EnvInterpolator;
 use Ddns\Config\Environment;
 use Ddns\Config\HostConfig;
@@ -22,8 +23,14 @@ final class Fixtures
 {
     public const TOKEN = 'test-token-0123456789abcdef';
 
-    /** @var list<string> */
-    public const DRIVERS = ['digitalocean', 'vultr', 'cloudflare', 'route53'];
+    /** @var array<string, bool> driver => whether a token is required */
+    public const DRIVERS = [
+        'digitalocean' => true,
+        'vultr' => true,
+        'cloudflare' => true,
+        // Credentials may come from the AWS chain instead of the config file.
+        'route53' => false,
+    ];
 
     public static function restClient(MockHttpClient $client, string $driver, string $baseUri): RestClient
     {
@@ -68,7 +75,7 @@ final class Fixtures
      */
     public static function loader(array $env = []): ConfigLoader
     {
-        return new ConfigLoader(new EnvInterpolator(new Environment($env)), self::DRIVERS);
+        return new ConfigLoader(new EnvInterpolator(new Environment($env)), DriverCatalog::of(self::DRIVERS));
     }
 
     /**

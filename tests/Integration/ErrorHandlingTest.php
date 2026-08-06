@@ -67,16 +67,18 @@ final class ErrorHandlingTest extends HttpTestCase
     }
 
     /**
-     * Route53 is registered but unimplemented; that must surface as a clear
-     * 501 rather than an opaque crash.
+     * Route53 authenticates with AWS credentials that may come from an
+     * instance profile or task role rather than the config file, so a provider
+     * with no token must load rather than being rejected by validation.
+     *
+     * Deliberately does not call /update: that would reach AWS for real.
      */
-    public function testAnUnimplementedDriverReports501(): void
+    public function testARoute53ProviderLoadsWithoutAToken(): void
     {
         $config = <<<YAML
             providers:
               aws:
                 driver: route53
-                token: placeholder
             hosts:
               home:
                 provider: aws
@@ -85,10 +87,11 @@ final class ErrorHandlingTest extends HttpTestCase
                 token: {$this->hostToken()}
             YAML;
 
-        $response = $this->request('GET', '/v1/hosts/home/update', $this->auth(), configYaml: $config);
+        $response = $this->request('GET', '/v1/hosts/home', $this->auth(), configYaml: $config);
 
-        self::assertSame(501, $response->getStatusCode());
-        self::assertStringContainsString('not implemented yet', $this->atString($response, 'records.0.reason'));
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame('home.example.com', $this->at($response, 'host.fqdn'));
+        self::assertSame(0, $this->upstream()->requestCount(), 'No provider call should have been made.');
     }
 
     /**
