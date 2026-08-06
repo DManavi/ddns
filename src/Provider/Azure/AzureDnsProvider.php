@@ -25,18 +25,20 @@ use Ddns\Provider\Http\RestResponse;
  * type and relative name, so a lookup is one GET with no listing or pagination,
  * and PUT is create-or-update.
  *
+ * Serves both public and private zones. They are separate Azure resource types
+ * that disagree on the API version and on the casing of the record body, so
+ * everything that differs is held by {@see AzureZoneKind} rather than being
+ * hard-coded here.
+ *
  * @see https://learn.microsoft.com/rest/api/dns/record-sets
+ * @see https://learn.microsoft.com/rest/api/dns/privatedns/record-sets
  */
 final class AzureDnsProvider implements DnsProvider
 {
-    public const DRIVER = 'azuredns';
-
     public const MANAGEMENT_ENDPOINT = 'https://management.azure.com';
 
     /** OAuth2 scope for the management API, as the client credentials grant wants it. */
     public const DEFAULT_SCOPE = 'https://management.azure.com/.default';
-
-    public const API_VERSION = '2018-05-01';
 
     /**
      * Error codes that mean the containing resource is missing rather than the
@@ -53,18 +55,24 @@ final class AzureDnsProvider implements DnsProvider
         private readonly RestClient $client,
         private readonly string $subscriptionId,
         private readonly string $resourceGroup,
+        private readonly AzureZoneKind $kind = AzureZoneKind::Public,
     ) {
     }
 
     public function driver(): string
     {
-        return self::DRIVER;
+        return $this->kind->driver();
+    }
+
+    public function kind(): AzureZoneKind
+    {
+        return $this->kind;
     }
 
     public function findRecord(Hostname $hostname, RecordType $type): ?DnsRecord
     {
         $response = $this->client->get($this->recordPath($hostname, $type), [
-            'api-version' => self::API_VERSION,
+            'api-version' => $this->kind->apiVersion(),
         ]);
 
         // A 404 is ambiguous: the record may simply not exist yet, or the zone,
@@ -73,7 +81,7 @@ final class AzureDnsProvider implements DnsProvider
         // error code decides.
         if ($response->isNotFound()) {
             if ($this->indicatesMissingContainer($response)) {
-                throw ZoneNotFound::for(self::DRIVER, sprintf(
+                throw ZoneNotFound::for($this->driver(), sprintf(
                     '%s (resource group "%s")',
                     $hostname->zone(),
                     $this->resourceGroup,
@@ -107,19 +115,20 @@ final class AzureDnsProvider implements DnsProvider
             $this->recordPath($hostname, $type),
             [
                 'properties' => [
-                    'TTL' => $ttl,
-                    // The body key and the value key both change with the record
-                    // type; there is no shared shape between A and AAAA.
-                    $this->recordsKey($type) => [
-                        [$this->addressKey($type) => $ip->value()],
+                    // Both the TTL key and the records key differ between public
+                    // and private zones, and the records key differs again by
+                    // record type. Nothing here is a fixed string.
+                    $this->kind->ttlKey() => $ttl,
+                    $this->kind->recordsKey($type) => [
+                        [$this->kind->addressKey($type) => $ip->value()],
                     ],
                 ],
             ],
-            ['api-version' => self::API_VERSION],
+            ['api-version' => $this->kind->apiVersion()],
         );
 
         if ($response->isNotFound() && $this->indicatesMissingContainer($response)) {
-            throw ZoneNotFound::for(self::DRIVER, sprintf(
+            throw ZoneNotFound::for($this->driver(), sprintf(
                 '%s (resource group "%s")',
                 $hostname->zone(),
                 $this->resourceGroup,
@@ -133,14 +142,15 @@ final class AzureDnsProvider implements DnsProvider
     }
 
     /**
-     * `/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Network/dnsZones/{zone}/{TYPE}/{name}`
+     * `/subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Network/{dnsZones|privateDnsZones}/{zone}/{TYPE}/{name}`
      */
     private function recordPath(Hostname $hostname, RecordType $type): string
     {
         return sprintf(
-            '/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/dnsZones/%s/%s/%s',
+            '/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/%s/%s/%s/%s',
             rawurlencode($this->subscriptionId),
             rawurlencode($this->resourceGroup),
+            $this->kind->resourceType(),
             rawurlencode($hostname->zone()),
             $type->value,
             // The apex is `@`, which has no reserved meaning in a path segment
@@ -154,8 +164,9 @@ final class AzureDnsProvider implements DnsProvider
         // An alias record takes its value from another Azure resource and has no
         // address of its own. Overwriting one would silently detach a Traffic
         // Manager profile or CDN endpoint, so refuse rather than clobber.
-        if ($response->get('properties.targetResource.id') !== null) {
-            throw RecordOperationFailed::for(self::DRIVER, 'read DNS record', sprintf(
+        // Private zones have no such concept.
+        if ($this->kind->supportsAliasRecords() && $response->get('properties.targetResource.id') !== null) {
+            throw RecordOperationFailed::for($this->driver(), 'read DNS record', sprintf(
                 '"%s" is an alias record pointing at another Azure resource. Refusing to replace it '
                 . 'with a plain %s record.',
                 $hostname->fqdn(),
@@ -163,10 +174,23 @@ final class AzureDnsProvider implements DnsProvider
             ));
         }
 
+        // A private zone linked to a VNet with auto-registration enabled holds
+        // records Azure maintains for its VMs. Those cannot be written to
+        // manually - the platform rejects it - so say so plainly here rather
+        // than letting the update fail later with an opaque error.
+        if ($this->kind->supportsAutoRegistration() && $response->get('properties.isAutoRegistered') === true) {
+            throw RecordOperationFailed::for($this->driver(), 'read DNS record', sprintf(
+                '"%s" is auto-registered by Azure for a virtual machine on a linked VNet, and cannot be '
+                . 'changed manually. Use a different hostname, or disable auto-registration on the '
+                . 'VNet link.',
+                $hostname->fqdn(),
+            ));
+        }
+
         $values = [];
 
-        foreach ($response->listOf('properties.' . $this->recordsKey($type)) as $entry) {
-            $address = $entry[$this->addressKey($type)] ?? null;
+        foreach ($response->listOf('properties.' . $this->kind->recordsKey($type)) as $entry) {
+            $address = $entry[$this->kind->addressKey($type)] ?? null;
 
             if (is_string($address) && $address !== '') {
                 $values[] = $address;
@@ -177,7 +201,7 @@ final class AzureDnsProvider implements DnsProvider
             return null;
         }
 
-        $ttl = $response->get('properties.TTL');
+        $ttl = $response->get('properties.' . $this->kind->ttlKey());
 
         // A multi-value set is reported by its first value, so it compares as
         // out of date whenever it holds anything but our address and the next
@@ -209,21 +233,5 @@ final class AzureDnsProvider implements DnsProvider
         }
 
         return in_array($code, self::CONTAINER_MISSING_CODES, true);
-    }
-
-    /**
-     * `ARecords` or `AAAARecords`.
-     */
-    private function recordsKey(RecordType $type): string
-    {
-        return $type->value . 'Records';
-    }
-
-    /**
-     * `ipv4Address` or `ipv6Address`.
-     */
-    private function addressKey(RecordType $type): string
-    {
-        return $type->isIpv6() ? 'ipv6Address' : 'ipv4Address';
     }
 }

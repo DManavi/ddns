@@ -19,6 +19,10 @@ use Psr\Http\Message\StreamFactoryInterface;
 /**
  * Builds the Azure DNS driver from configuration.
  *
+ * One factory serves both zone kinds; the container registers it twice, since
+ * public and private zones differ only in the details {@see AzureZoneKind}
+ * holds.
+ *
  * The presence of `client_secret` selects the authentication method: with one,
  * a service principal; without, the managed identity attached to the host. The
  * latter is the recommended way to run on Azure, since no secret then appears
@@ -38,17 +42,18 @@ final class AzureDnsProviderFactory implements ProviderFactory
         private readonly ClientInterface $http,
         private readonly RequestFactoryInterface $requestFactory,
         private readonly StreamFactoryInterface $streamFactory,
+        private readonly AzureZoneKind $kind = AzureZoneKind::Public,
     ) {
     }
 
     public function driver(): string
     {
-        return AzureDnsProvider::DRIVER;
+        return $this->kind->driver();
     }
 
     public function description(): string
     {
-        return 'Azure DNS (management REST API)';
+        return $this->kind->description();
     }
 
     public function isAvailable(): bool
@@ -93,6 +98,7 @@ final class AzureDnsProviderFactory implements ProviderFactory
             $management,
             $this->option($config, 'subscription_id') ?? '',
             $this->option($config, 'resource_group') ?? '',
+            $this->kind,
         );
     }
 
@@ -114,6 +120,8 @@ final class AzureDnsProviderFactory implements ProviderFactory
                 ]),
                 // Only meaningful for a user-assigned identity.
                 $clientId,
+                ManagedIdentityTokenProvider::RESOURCE,
+                $this->driver(),
             );
         }
 
@@ -123,6 +131,7 @@ final class AzureDnsProviderFactory implements ProviderFactory
             $clientId ?? '',
             $clientSecret,
             $this->option($config, 'scope') ?? AzureDnsProvider::DEFAULT_SCOPE,
+            $this->driver(),
         );
     }
 
@@ -135,7 +144,7 @@ final class AzureDnsProviderFactory implements ProviderFactory
             $this->http,
             $this->requestFactory,
             $this->streamFactory,
-            AzureDnsProvider::DRIVER,
+            $this->driver(),
             $baseUri,
             $headers,
         );

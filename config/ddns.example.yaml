@@ -89,6 +89,23 @@ providers:
   #   # authority: https://login.microsoftonline.us
   #   # endpoint: https://management.usgovcloudapi.net
 
+  # Azure Private DNS. Same configuration as azuredns above - only the driver
+  # name differs, because private zones are a separate Azure resource type with
+  # its own API version.
+  #
+  # Private zones resolve to internal addresses, so server.allow_private_ips
+  # above almost certainly needs to be true.
+  #
+  # Records that Azure auto-registers for VMs on a linked virtual network
+  # cannot be changed by anyone, and are refused with an explanation.
+  # azure-internal:
+  #   driver: azureprivatedns
+  #   subscription_id: ${AZURE_SUBSCRIPTION_ID}
+  #   resource_group: my-resource-group
+  #   tenant_id: ${AZURE_TENANT_ID}
+  #   client_id: ${AZURE_CLIENT_ID}
+  #   client_secret: ${AZURE_CLIENT_SECRET}
+
   # AWS Route53. Unlike the others this needs no `token`: when no credentials
   # are given the AWS default chain runs, picking them up from the environment,
   # ~/.aws/credentials, an EC2 instance profile, an ECS task role or IRSA.

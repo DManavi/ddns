@@ -13,6 +13,7 @@ use Ddns\Domain\Record\Hostname;
 use Ddns\Domain\Record\IpAddress;
 use Ddns\Domain\Record\RecordType;
 use Ddns\Provider\Azure\AzureDnsProvider;
+use Ddns\Provider\Azure\AzureZoneKind;
 use Ddns\Tests\Support\Fixtures;
 use Ddns\Tests\Support\MockHttpClient;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -35,7 +36,7 @@ final class AzureDnsProviderTest extends TestCase
         return new AzureDnsProvider(
             Fixtures::restClientWithHeaders(
                 $this->http(),
-                AzureDnsProvider::DRIVER,
+                AzureZoneKind::Public->driver(),
                 AzureDnsProvider::MANAGEMENT_ENDPOINT,
                 static fn (): array => ['Authorization' => 'Bearer test-token'],
             ),

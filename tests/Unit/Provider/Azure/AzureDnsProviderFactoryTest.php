@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace Ddns\Tests\Unit\Provider\Azure;
 
 use Ddns\Config\ProviderConfig;
+use Ddns\Domain\Provider\Exception\AuthenticationFailed;
 use Ddns\Domain\Record\Hostname;
 use Ddns\Domain\Record\RecordType;
 use Ddns\Provider\Azure\AzureDnsProvider;
 use Ddns\Provider\Azure\AzureDnsProviderFactory;
+use Ddns\Provider\Azure\AzureZoneKind;
 use Ddns\Tests\Support\MockHttpClient;
 use PHPUnit\Framework\TestCase;
 use Slim\Psr7\Factory\RequestFactory;
@@ -23,9 +25,9 @@ final class AzureDnsProviderFactoryTest extends TestCase
         return $this->http ??= new MockHttpClient();
     }
 
-    private function factory(): AzureDnsProviderFactory
+    private function factory(AzureZoneKind $kind = AzureZoneKind::Public): AzureDnsProviderFactory
     {
-        return new AzureDnsProviderFactory($this->http(), new RequestFactory(), new StreamFactory());
+        return new AzureDnsProviderFactory($this->http(), new RequestFactory(), new StreamFactory(), $kind);
     }
 
     public function testIsRegisteredAndAvailable(): void
@@ -35,6 +37,72 @@ final class AzureDnsProviderFactoryTest extends TestCase
         self::assertSame('azuredns', $factory->driver());
         self::assertTrue($factory->isAvailable());
         self::assertNull($factory->unavailableReason());
+    }
+
+    /**
+     * One factory serves both zone kinds; the container registers it twice.
+     */
+    public function testTheSameFactoryServesPrivateZonesUnderItsOwnName(): void
+    {
+        $factory = $this->factory(AzureZoneKind::Private);
+
+        self::assertSame('azureprivatedns', $factory->driver());
+        self::assertStringContainsString('Private', $factory->description());
+        self::assertTrue($factory->isAvailable());
+    }
+
+    public function testBothKindsNeedTheSameOptionsAndNoToken(): void
+    {
+        foreach ([AzureZoneKind::Public, AzureZoneKind::Private] as $kind) {
+            $factory = $this->factory($kind);
+
+            self::assertFalse($factory->requiresToken(), $kind->value);
+            self::assertSame(['subscription_id', 'resource_group'], $factory->requiredOptions(), $kind->value);
+        }
+    }
+
+    public function testBuildsAPrivateZoneProvider(): void
+    {
+        $provider = $this->factory(AzureZoneKind::Private)->create($this->config());
+
+        self::assertInstanceOf(AzureDnsProvider::class, $provider);
+        self::assertSame('azureprivatedns', $provider->driver());
+        self::assertSame(AzureZoneKind::Private, $provider->kind());
+    }
+
+    /**
+     * An auth failure must name the driver actually in use, not the public one.
+     */
+    public function testAttributesAuthFailuresToThePrivateDriver(): void
+    {
+        $this->http()->queue(401, ['error' => 'invalid_client', 'error_description' => 'bad secret']);
+
+        try {
+            $this->factory(AzureZoneKind::Private)->create($this->config([
+                'tenant_id' => 'tenant-1',
+                'client_id' => 'client-1',
+                'client_secret' => 'wrong',
+            ]))->findRecord($this->hostname(), RecordType::A);
+
+            self::fail('Expected an AuthenticationFailed exception.');
+        } catch (AuthenticationFailed $e) {
+            self::assertSame('azureprivatedns', $e->driver());
+        }
+    }
+
+    public function testAttributesManagedIdentityFailuresToThePrivateDriver(): void
+    {
+        $this->http()->queue(400, ['error' => 'invalid_request']);
+
+        try {
+            $this->factory(AzureZoneKind::Private)
+                ->create($this->config())
+                ->findRecord($this->hostname(), RecordType::A);
+
+            self::fail('Expected an AuthenticationFailed exception.');
+        } catch (AuthenticationFailed $e) {
+            self::assertSame('azureprivatedns', $e->driver());
+        }
     }
 
     /**
