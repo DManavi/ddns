@@ -13,7 +13,6 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Style\SymfonyStyle;
 
 #[AsCommand(
     name: 'config:validate',
@@ -23,6 +22,8 @@ final class ConfigValidateCommand extends AbstractDdnsCommand
 {
     protected function configure(): void
     {
+        $this->addJsonOption('Emit a JSON report instead of human-readable output.');
+
         $this
             ->addArgument('file', InputArgument::OPTIONAL, 'Config file to check; defaults to the discovered one.')
             ->setHelp(
@@ -32,9 +33,31 @@ final class ConfigValidateCommand extends AbstractDdnsCommand
             );
     }
 
+    /**
+     * The error message is a heading followed by one `  - ` bullet per problem.
+     * Splitting it back out gives a caller a list it can iterate.
+     *
+     * @return list<string>
+     */
+    private static function splitProblems(string $message): array
+    {
+        $problems = [];
+
+        foreach (explode("\n", $message) as $line) {
+            $line = trim($line);
+
+            if (str_starts_with($line, '- ')) {
+                $problems[] = substr($line, 2);
+            }
+        }
+
+        return $problems === [] ? [trim($message)] : $problems;
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
+        $io = $this->style($input, $output);
+        $json = $this->wantsJson($input);
 
         $file = $input->getArgument('file');
         $path = is_string($file) && $file !== ''
@@ -44,9 +67,38 @@ final class ConfigValidateCommand extends AbstractDdnsCommand
         try {
             $configuration = $this->service(ConfigLoader::class)->load($path);
         } catch (ConfigurationError $e) {
-            $io->error($e->getMessage());
+            if ($json) {
+                // The problems are what a caller wants: report them as a list
+                // rather than one blob of prose.
+                $this->json($output)->document([
+                    'file' => $path,
+                    'valid' => false,
+                    'problems' => self::splitProblems($e->getMessage()),
+                ]);
+            } else {
+                $io->error($e->getMessage());
+            }
 
             return self::INVALID;
+        }
+
+        if ($json) {
+            $this->json($output)->document([
+                'file' => $path,
+                'valid' => true,
+                'problems' => [],
+                'server' => $configuration->server()->toArray(),
+                'providers' => array_map(
+                    static fn ($provider): array => $provider->toRedactedArray(),
+                    array_values($configuration->providers()),
+                ),
+                'hosts' => array_map(
+                    static fn ($host): array => $host->toRedactedArray(),
+                    array_values($configuration->hosts()),
+                ),
+            ]);
+
+            return self::SUCCESS;
         }
 
         $io->success(sprintf('%s is valid.', $path));

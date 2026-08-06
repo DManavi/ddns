@@ -637,11 +637,11 @@ For routers that only accept a full URL, use the query-parameter form.
 ## CLI
 
 ```console
-$ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run]
-$ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once]
+$ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run] [--json]
+$ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once] [--json]
 $ ddns hosts:list [--json]
-$ ddns config:validate [<file>]
-$ ddns providers:list
+$ ddns config:validate [<file>] [--json]
+$ ddns providers:list [--json]
 ```
 
 ```console
@@ -656,6 +656,103 @@ $ ddns update --all
 
 Exit codes: `0` success, `1` at least one record failed, `2` invalid
 configuration or arguments.
+
+### JSON output
+
+Every command takes `--json`, for scripting and monitoring.
+
+In JSON mode **stdout carries nothing but the payload**. Progress notes,
+warnings, errors and log lines all go to stderr, so the output can be piped
+straight into a parser without filtering:
+
+```console
+$ ddns update --all --json | jq -r '.hosts[].fqdn'
+```
+
+Each entry under `hosts` is the same structure [the HTTP API](#http-api)
+returns for that host, so a script written against one front-end works with the
+other. (The HTTP response additionally carries `client_ip`, which has no CLI
+equivalent.)
+
+```json
+{
+  "changed": true,
+  "failed": false,
+  "dry_run": false,
+  "hosts": [
+    {
+      "host": "home",
+      "fqdn": "home.example.com",
+      "status": "updated",
+      "changed": true,
+      "records": [
+        {
+          "type": "A",
+          "status": "updated",
+          "ip": "203.0.113.99",
+          "previous": "203.0.113.7",
+          "reason": null,
+          "dry_run": false
+        }
+      ]
+    }
+  ]
+}
+```
+
+The `changed` and `failed` flags summarise the run, so a caller can branch
+without walking the list. A failure is still valid JSON — the `reason` is where
+the explanation lives, and the exit code carries the same verdict as `failed`:
+
+```bash
+#!/bin/bash
+result=$(ddns update --all --json) || echo "update failed" >&2
+
+if [ "$(jq -r .changed <<<"$result")" = "true" ]; then
+    jq -r '.hosts[] | "\(.fqdn) -> \(.records[].ip)"' <<<"$result" | mail -s 'IP changed' me@example.com
+fi
+```
+
+Tokens are redacted in `hosts:list --json` and `config:validate --json`, so the
+output is safe to log.
+
+`config:validate --json` returns problems as a list rather than one block of
+prose, which is what makes it usable in a deployment check:
+
+```console
+$ ddns config:validate --json | jq -r 'select(.valid | not) | .problems[]'
+"providers.p1.driver" is "nosuchdriver", which is not a known driver. ...
+```
+
+#### Streaming events from `watch`
+
+`watch` runs indefinitely, so it emits [NDJSON](https://ndjson.org) instead: one
+self-contained object per line, flushed as it happens. That suits a reader
+consuming the stream a line at a time.
+
+```console
+$ ddns watch --all --json
+{"event":"started","hosts":["home"],"types":["A"],"interval":300,"once":false}
+{"event":"updated","host":"home","fqdn":"home.example.com","type":"A","status":"updated","ip":"203.0.113.99","previous":"203.0.113.7","reason":null,"dry_run":false}
+```
+
+| Event | When |
+| --- | --- |
+| `started` | Once at startup, listing what is being watched. |
+| `created` | A record did not exist and was added. |
+| `updated` | A record pointed elsewhere and was corrected. |
+| `failed` | The provider rejected the write; `reason` explains why. |
+| `unchanged` | A poll found nothing to do. Only with `-v`, since it is otherwise constant noise. |
+| `stopped` | Shutdown, with a `reason`. |
+
+Piping it into a log shipper or an alerting rule needs no parsing beyond
+reading one line at a time:
+
+```bash
+ddns watch --all --json | while read -r line; do
+    [ "$(jq -r .event <<<"$line")" = "failed" ] && alert "$(jq -r .reason <<<"$line")"
+done
+```
 
 ### `watch`
 

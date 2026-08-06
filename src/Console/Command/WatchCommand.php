@@ -26,6 +26,8 @@ final class WatchCommand extends AbstractDdnsCommand
 
     protected function configure(): void
     {
+        $this->addJsonOption('Emit one JSON object per line (NDJSON) as events happen.');
+
         $this
             ->addArgument('host', InputArgument::IS_ARRAY, 'Host names to watch; omit to watch all.')
             ->addOption('all', 'a', InputOption::VALUE_NONE, 'Watch every configured host.')
@@ -55,7 +57,8 @@ final class WatchCommand extends AbstractDdnsCommand
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
+        $io = $this->style($input, $output);
+        $json = $this->wantsJson($input) ? $this->json($output) : null;
 
         $hosts = $this->selectHosts($input, $io);
 
@@ -64,6 +67,7 @@ final class WatchCommand extends AbstractDdnsCommand
         }
 
         if ($hosts === []) {
+            $json?->event(['event' => 'stopped', 'reason' => 'no-hosts']);
             $io->warning('No hosts are configured.');
 
             return self::SUCCESS;
@@ -80,12 +84,24 @@ final class WatchCommand extends AbstractDdnsCommand
 
         $this->installSignalHandlers($io);
 
-        $io->success(sprintf(
-            'Watching %d host(s) every %ds. Tracking: %s. Press Ctrl+C to stop.',
-            count($hosts),
-            $interval,
-            implode(', ', array_map(static fn (RecordType $t): string => $t->value, $types)),
-        ));
+        if ($json !== null) {
+            // A leading event tells a consumer the watcher is up and what it
+            // is tracking, without it having to parse the human banner.
+            $json->event([
+                'event' => 'started',
+                'hosts' => array_map(static fn (HostConfig $h): string => $h->name(), $hosts),
+                'types' => array_map(static fn (RecordType $t): string => $t->value, $types),
+                'interval' => $interval,
+                'once' => $once,
+            ]);
+        } else {
+            $io->success(sprintf(
+                'Watching %d host(s) every %ds. Tracking: %s. Press Ctrl+C to stop.',
+                count($hosts),
+                $interval,
+                implode(', ', array_map(static fn (RecordType $t): string => $t->value, $types)),
+            ));
+        }
 
         /** @var array<string, string> $lastSeen */
         $lastSeen = [];
@@ -116,22 +132,33 @@ final class WatchCommand extends AbstractDdnsCommand
 
                 foreach ($reports as $report) {
                     foreach ($report->records() as $record) {
-                        if ($record->outcome()->isFailure()) {
+                        $isFailure = $record->outcome()->isFailure();
+
+                        if ($isFailure) {
                             $failed = true;
-                            $io->writeln(sprintf(
-                                '<error>%s %s %s</error>',
-                                $this->timestamp(),
-                                $report->host(),
-                                $record->describe(),
-                            ));
-                        } elseif ($record->outcome()->isChange()) {
-                            $io->writeln(sprintf(
-                                '<info>%s %s %s</info>',
-                                $this->timestamp(),
-                                $report->host(),
-                                $record->describe(),
-                            ));
                         }
+
+                        if (!$isFailure && !$record->outcome()->isChange()) {
+                            continue;
+                        }
+
+                        if ($json !== null) {
+                            $json->event([
+                                'event' => $record->outcome()->value,
+                                'host' => $report->host(),
+                                'fqdn' => $report->fqdn(),
+                            ] + $record->toArray());
+
+                            continue;
+                        }
+
+                        $io->writeln(sprintf(
+                            '<%1$s>%2$s %3$s %4$s</%1$s>',
+                            $isFailure ? 'error' : 'info',
+                            $this->timestamp(),
+                            $report->host(),
+                            $record->describe(),
+                        ));
                     }
                 }
 
@@ -146,10 +173,19 @@ final class WatchCommand extends AbstractDdnsCommand
                 }
             } else {
                 ++$unchangedPolls;
-                $io->writeln(
-                    sprintf('%s no change (%s)', $this->timestamp(), $this->describe($current)),
-                    OutputInterface::VERBOSITY_VERBOSE,
-                );
+
+                // Quiet by default either way: a poll that found nothing is
+                // noise unless you asked to see it.
+                if ($json !== null) {
+                    if ($output->isVerbose()) {
+                        $json->event(['event' => 'unchanged', 'addresses' => $current]);
+                    }
+                } else {
+                    $io->writeln(
+                        sprintf('%s no change (%s)', $this->timestamp(), $this->describe($current)),
+                        OutputInterface::VERBOSITY_VERBOSE,
+                    );
+                }
             }
 
             if ($once) {
@@ -159,8 +195,12 @@ final class WatchCommand extends AbstractDdnsCommand
             $this->sleep($this->delay($interval, $consecutiveFailures));
         }
 
-        $io->writeln('');
-        $io->success('Stopped.');
+        if ($json !== null) {
+            $json->event(['event' => 'stopped', 'reason' => 'signal']);
+        } else {
+            $io->writeln('');
+            $io->success('Stopped.');
+        }
 
         return self::SUCCESS;
     }

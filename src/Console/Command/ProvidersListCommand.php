@@ -10,7 +10,6 @@ use Ddns\Provider\ProviderFactory;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Style\SymfonyStyle;
 
 #[AsCommand(
     name: 'providers:list',
@@ -18,11 +17,31 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 )]
 final class ProvidersListCommand extends AbstractDdnsCommand
 {
+    protected function configure(): void
+    {
+        $this->addJsonOption('Emit JSON instead of a table.');
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
+        $io = $this->style($input, $output);
 
         $factories = $this->service(ProviderFactories::class)->all();
+
+        if ($this->wantsJson($input)) {
+            $this->json($output)->document([
+                'drivers' => array_map(static fn (ProviderFactory $f): array => [
+                    'driver' => $f->driver(),
+                    'description' => $f->description(),
+                    'available' => $f->isAvailable(),
+                    'unavailable_reason' => $f->unavailableReason(),
+                    'requires_token' => $f->requiresToken(),
+                    'required_options' => $f->requiredOptions(),
+                ], $factories),
+            ]);
+
+            return self::SUCCESS;
+        }
 
         $rows = array_map(
             static fn (ProviderFactory $factory): array => [
