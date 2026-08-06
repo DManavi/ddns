@@ -14,7 +14,12 @@
 
 # Editor / OS noise
 /.idea/
-/.vscode/
+
+# Editor config that is worth sharing is committed; anything personal - your
+# own settings.json, window layout, extension state - is not.
+/.vscode/*
+!/.vscode/launch.json
+!/.vscode/extensions.json
 .DS_Store
 *.swp
 

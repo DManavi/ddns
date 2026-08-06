@@ -1,0 +1,184 @@
+{
+  // Debugging needs the PHP Debug extension (xdebug.php-debug) and Xdebug
+  // installed in the PHP you are using - see .vscode/extensions.json and the
+  // README. Every configuration here also works with "Run Without Debugging"
+  // (Ctrl+F5 / Cmd+F5), which needs neither.
+  //
+  // DDNS_CONFIG points at ddns.dev.yaml, which is committed with placeholder
+  // credentials, so all of these run with no setup. Put real tokens in .env
+  // when you want an update to actually reach a provider.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // php -S 127.0.0.1:8080 -t public public/index.php
+      //
+      // Opens /api - the browsable documentation - once the server reports it
+      // is listening.
+      "name": "Serve (php -S)",
+      "type": "php",
+      "request": "launch",
+      "runtimeArgs": [
+        "-dxdebug.mode=debug",
+        "-dxdebug.start_with_request=yes",
+        "-S",
+        "127.0.0.1:8080",
+        "-t",
+        "public"
+      ],
+      // The router script. The built-in server serves it for every request
+      // that is not a real file, which is what makes /v1/hosts/{host}/update
+      // reach the router.
+      "program": "${workspaceFolder}/public/index.php",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
+      "port": 9003,
+      "serverReadyAction": {
+        // Matches "PHP 8.3.29 Development Server (http://127.0.0.1:8080) started".
+        "pattern": "Development Server \\(http://[^:]+:([0-9]+)\\) started",
+        "uriFormat": "http://localhost:%s/api",
+        "action": "openExternally"
+      }
+    },
+    {
+      // The same, on a port the system picks, for when 8080 is taken.
+      "name": "Serve (php -S, random port)",
+      "type": "php",
+      "request": "launch",
+      "runtimeArgs": [
+        "-dxdebug.mode=debug",
+        "-dxdebug.start_with_request=yes",
+        "-S",
+        "127.0.0.1:0",
+        "-t",
+        "public"
+      ],
+      "program": "${workspaceFolder}/public/index.php",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
+      "port": 9003,
+      "serverReadyAction": {
+        "pattern": "Development Server \\(http://[^:]+:([0-9]+)\\) started",
+        "uriFormat": "http://localhost:%s/api",
+        "action": "openExternally"
+      }
+    },
+    {
+      "name": "CLI: hosts:list",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["hosts:list"],
+      "cwd": "${workspaceFolder}",
+      "env": { "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml" },
+      "port": 9003
+    },
+    {
+      "name": "CLI: config:validate",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["config:validate"],
+      "cwd": "${workspaceFolder}",
+      "env": { "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml" },
+      "port": 9003
+    },
+    {
+      // Reads the current record from the provider, so this one needs a real
+      // token in .env - the placeholder is rejected.
+      "name": "CLI: update --all --dry-run",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["update", "--all", "--dry-run", "-v"],
+      "cwd": "${workspaceFolder}",
+      "env": { "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml" },
+      "port": 9003
+    },
+    {
+      // A short interval, so the loop is visible while stepping through it.
+      "name": "CLI: watch --all",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["watch", "--all", "--interval", "30", "-v"],
+      "cwd": "${workspaceFolder}",
+      "env": { "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml" },
+      "port": 9003,
+      // Ctrl+C is not available in the debug console, and watch installs
+      // signal handlers, so use the stop button - it terminates the process.
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "CLI: config:init (wizard)",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["config:init"],
+      "cwd": "${workspaceFolder}",
+      // The wizard asks questions, which the debug console cannot answer.
+      "console": "integratedTerminal",
+      "port": 9003
+    },
+    {
+      "name": "PHPUnit: everything",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/vendor/bin/phpunit",
+      "cwd": "${workspaceFolder}",
+      "port": 9003,
+      // Stepping into PHPUnit itself is rarely what anyone wants.
+      "ignore": ["**/vendor/**/*.php"]
+    },
+    {
+      "name": "PHPUnit: the open file",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/vendor/bin/phpunit",
+      "args": ["${file}"],
+      "cwd": "${workspaceFolder}",
+      "port": 9003,
+      "ignore": ["**/vendor/**/*.php"]
+    },
+    {
+      "name": "PHPUnit: --filter",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/vendor/bin/phpunit",
+      "args": ["--filter", "${input:phpunitFilter}"],
+      "cwd": "${workspaceFolder}",
+      "port": 9003,
+      "ignore": ["**/vendor/**/*.php"]
+    },
+    {
+      // For a request handled somewhere this editor did not start: the dev
+      // container, Apache, or PHP-FPM. Start this, then make the request.
+      //
+      // The container needs Xdebug installed and pointed back at the host:
+      //   xdebug.mode=debug
+      //   xdebug.client_host=host.docker.internal
+      "name": "Listen for Xdebug",
+      "type": "php",
+      "request": "launch",
+      "port": 9003,
+      // The dev image puts the application at /app.
+      "pathMappings": {
+        "/app": "${workspaceFolder}"
+      },
+      "ignore": ["**/vendor/**/*.php"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "phpunitFilter",
+      "type": "promptString",
+      "description": "A PHPUnit --filter pattern, for example DocsTest or it_redirects",
+      "default": "DocsTest"
+    }
+  ]
+}

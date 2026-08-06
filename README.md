@@ -1191,6 +1191,40 @@ DDNS_CONFIG=ddns.dev.yaml php -S 127.0.0.1:8080 -t public public/index.php
 The same dev configuration, so the same URLs and the same committed token work.
 For the CLI, `DDNS_CONFIG=ddns.dev.yaml ./bin/ddns hosts:list`.
 
+### VS Code
+
+`.vscode/launch.json` is committed, so **Run and Debug** is populated the
+moment the repository is opened. Nothing needs configuring first: every profile
+points `DDNS_CONFIG` at `ddns.dev.yaml`.
+
+| Profile | What it does |
+| --- | --- |
+| **Serve (php -S)** | Starts the built-in server on `127.0.0.1:8080` and opens `/api` |
+| **Serve (php -S, random port)** | The same, on a port the system picks, for when 8080 is taken |
+| **CLI: …** | `hosts:list`, `config:validate`, `update --all --dry-run`, `watch --all`, the `config:init` wizard |
+| **PHPUnit: …** | The whole suite, the file you have open, or a `--filter` you are prompted for |
+| **Listen for Xdebug** | Attaches to a request handled elsewhere — the dev container, Apache, PHP-FPM |
+
+Breakpoints need the [PHP Debug][phpdebug] extension and Xdebug in whichever
+PHP you are using; `.vscode/extensions.json` recommends it, so VS Code offers
+to install it. Without Xdebug the profiles still work under **Run Without
+Debugging** (`Ctrl+F5`) — the `-dxdebug.*` flags are ignored when the extension
+is not loaded.
+
+`Listen for Xdebug` maps `/app` back to the workspace, which is where the dev
+image puts the application. To use it against the container, Xdebug there needs
+to point back at the host:
+
+```ini
+xdebug.mode = debug
+xdebug.client_host = host.docker.internal
+```
+
+Personal settings stay out of the repository: `.vscode/` is gitignored apart
+from `launch.json` and `extensions.json`.
+
+[phpdebug]: https://marketplace.visualstudio.com/items?itemName=xdebug.php-debug
+
 ### The toolchain
 
 ```bash

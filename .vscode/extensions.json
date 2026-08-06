@@ -1,0 +1,8 @@
+{
+  // Only the debugger is required, and only for the launch configurations in
+  // launch.json - the project itself needs nothing but PHP and Composer.
+  "recommendations": [
+    "xdebug.php-debug",
+    "bmewburn.vscode-intelephense-client"
+  ]
+}
