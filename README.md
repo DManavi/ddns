@@ -144,8 +144,110 @@ php -S 0.0.0.0:8080 -t public public/index.php
 ```
 
 > The built-in server is single-threaded. It is fine for a DDNS endpoint
-> receiving a handful of requests a day, but put nginx, Caddy or Apache in front
-> of it if you want TLS — and if you do, set `server.trusted_proxies`.
+> receiving a handful of requests a day, but use a real web server for anything
+> else — see [Apache](#apache) below, or put nginx or Caddy in front for TLS.
+
+### Apache
+
+> **The one thing that will catch you out:** Apache does not pass the
+> `Authorization` header to PHP-FPM. Without the workaround below, every Bearer
+> token is silently discarded and every request returns `401` — with no clue as
+> to why. This is the single most common cause of "my token is right but it
+> won't authenticate".
+>
+> It does not affect `mod_php`, which performs Basic auth itself, or the
+> `?token=` query parameter, which is part of the URL.
+
+Enable the modules, then point a virtual host at `public/`:
+
+```bash
+sudo a2enmod rewrite setenvif proxy_fcgi
+sudo a2enconf php8.3-fpm          # or: sudo a2enmod php8.3
+```
+
+```apache
+<VirtualHost *:443>
+    ServerName ddns.example.com
+
+    # public/ is the only directory that may ever be served. src/, config/,
+    # vendor/ and your ddns.yaml all live above it and stay unreachable.
+    DocumentRoot /srv/ddns/public
+
+    <Directory /srv/ddns/public>
+        # AllowOverride None is faster: Apache then never looks for .htaccess.
+        # The directives below replace the shipped public/.htaccess.
+        AllowOverride None
+        Require all granted
+        Options -Indexes +FollowSymLinks
+
+        # Route everything that is not a real file to the front controller.
+        RewriteEngine On
+        RewriteCond %{REQUEST_FILENAME} !-f
+        RewriteCond %{REQUEST_FILENAME} !-d
+        RewriteRule ^ index.php [QSA,L]
+    </Directory>
+
+    # Hand the Authorization header to PHP. Without this, Bearer tokens never
+    # arrive. Note that CGIPassAuth does *not* help here: it applies to
+    # mod_cgi, not to mod_proxy_fcgi.
+    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+
+    <FilesMatch \.php$>
+        SetHandler "proxy:unix:/run/php/php8.3-fpm.sock|fcgi://localhost"
+    </FilesMatch>
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/ddns.example.com/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/ddns.example.com/privkey.pem
+
+    ErrorLog  ${APACHE_LOG_DIR}/ddns-error.log
+    CustomLog ${APACHE_LOG_DIR}/ddns-access.log combined
+</VirtualHost>
+```
+
+The application logs to `stderr`, which PHP-FPM forwards to its own error log
+rather than to `ddns-error.log`. Set `DDNS_LOG_LEVEL` in the pool config:
+
+```ini
+; /etc/php/8.3/fpm/pool.d/ddns.conf
+env[DDNS_CONFIG] = /srv/ddns/ddns.yaml
+env[DDNS_LOG_LEVEL] = INFO
+catch_workers_output = yes
+```
+
+Then check it works — the second command is the one that proves the
+`Authorization` workaround is in place:
+
+```bash
+curl -fsS https://ddns.example.com/health
+curl -fsS -H "Authorization: Bearer $TOKEN" https://ddns.example.com/v1/hosts/home
+```
+
+If the first succeeds and the second returns `401`, the header is being
+stripped: check that `mod_setenvif` is enabled and the `SetEnvIf` line is
+inside the right virtual host.
+
+**Shared hosting.** If you cannot edit the virtual host, the shipped
+`public/.htaccess` already contains the equivalent directives — set the site's
+document root to `public/` and ensure `AllowOverride All` is permitted. Nothing
+else is needed.
+
+**Permissions.** The application never writes to disk, so the web user needs
+read access only. Keep the config file out of reach of everything else, since
+it names your provider credentials:
+
+```bash
+sudo chown root:www-data /srv/ddns/ddns.yaml && sudo chmod 640 /srv/ddns/ddns.yaml
+```
+
+**Do not set `server.trusted_proxies` for Apache alone.** Whether you use
+`mod_php` or `mod_proxy_fcgi`, Apache passes the real client address through,
+so it is already correct. Only set it if something else sits in front — a CDN
+or load balancer — and then only with that thing's address ranges.
+
+**Keeping records fresh.** The HTTP endpoint only updates when something calls
+it. If nothing does, run the CLI alongside it with a systemd timer, or a unit
+running `ddns watch --all`.
 
 ## Configuration
 
