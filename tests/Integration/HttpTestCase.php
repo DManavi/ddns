@@ -94,6 +94,33 @@ abstract class HttpTestCase extends TestCase
         return $this->appWithConfigPath($configPath)->handle($request);
     }
 
+    /**
+     * Drive a request whose Basic credentials were consumed by the web server
+     * and surfaced as PHP_AUTH_USER / PHP_AUTH_PW, which is what some
+     * configurations do before PHP ever sees the header.
+     *
+     * @param array<string, string> $headers
+     * @param array<string, string> $serverParams
+     */
+    protected function requestWithServerParams(
+        string $method,
+        string $path,
+        array $headers = [],
+        array $serverParams = [],
+    ): ResponseInterface {
+        $request = (new ServerRequestFactory())->createServerRequest(
+            $method,
+            'https://ddns.test' . $path,
+            ['REMOTE_ADDR' => '203.0.113.7'] + $serverParams,
+        );
+
+        foreach ($headers as $name => $value) {
+            $request = $request->withHeader($name, $value);
+        }
+
+        return $this->app($this->defaultConfig())->handle($request);
+    }
+
     protected function handle(ServerRequestInterface $request, string $configYaml = ''): ResponseInterface
     {
         return $this->app($configYaml === '' ? $this->defaultConfig() : $configYaml)->handle($request);
