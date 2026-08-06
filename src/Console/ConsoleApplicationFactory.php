@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns\Console;
 
+use Ddns\Console\Command\ConfigInitCommand;
 use Ddns\Console\Command\ConfigValidateCommand;
 use Ddns\Console\Command\HostsListCommand;
 use Ddns\Console\Command\ProvidersListCommand;
@@ -27,6 +28,7 @@ final class ConsoleApplicationFactory
             new UpdateCommand($container),
             new WatchCommand($container),
             new HostsListCommand($container),
+            new ConfigInitCommand($container),
             new ConfigValidateCommand($container),
             new ProvidersListCommand($container),
         ]);

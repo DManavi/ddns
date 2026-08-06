@@ -40,6 +40,9 @@ abstract class ConsoleTestCase extends TestCase
     /** @var list<string> */
     private array $tempFiles = [];
 
+    /** @var list<string> */
+    private array $tempDirectories = [];
+
     /**
      * The address the faked echo service reports, for commands that resolve
      * rather than being told one.
@@ -59,7 +62,22 @@ abstract class ConsoleTestCase extends TestCase
             }
         }
 
+        foreach ($this->tempDirectories as $directory) {
+            // scandir rather than glob: GLOB_BRACE is not available on every
+            // build, and dotfiles matter here because .env is one.
+            foreach ((array) scandir($directory) as $entry) {
+                if (is_string($entry) && $entry !== '.' && $entry !== '..' && is_file($directory . '/' . $entry)) {
+                    unlink($directory . '/' . $entry);
+                }
+            }
+
+            if (is_dir($directory)) {
+                rmdir($directory);
+            }
+        }
+
         $this->tempFiles = [];
+        $this->tempDirectories = [];
         $this->upstream = null;
     }
 
@@ -101,6 +119,80 @@ abstract class ConsoleTestCase extends TestCase
         $exitCode = $application->run(new ArrayInput($input), $output);
 
         return new ConsoleResult($exitCode, $output->stdout(), $output->stderr());
+    }
+
+    /**
+     * Run a command that asks questions, answering them from a script.
+     *
+     * @param array<string, mixed> $input
+     * @param list<string>         $answers one per prompt, in order
+     */
+    protected function runInteractive(array $input, array $answers, string $configYaml = ''): ConsoleResult
+    {
+        $configPath = $this->tempFile($configYaml === '' ? $this->defaultConfig() : $configYaml);
+
+        $builder = new ContainerBuilder();
+        $builder->useAutowiring(true);
+
+        /** @var array<string, mixed> $definitions */
+        $definitions = require Bootstrap::projectRoot() . '/config/container.php';
+
+        $builder->addDefinitions($definitions);
+        $builder->addDefinitions([
+            'config.path' => $configPath,
+            ClientInterface::class => $this->upstream(),
+            LoggerInterface::class => new NullLogger(),
+        ]);
+
+        $application = ConsoleApplicationFactory::create($builder->build());
+        $application->setAutoExit(false);
+        $application->setCatchExceptions(false);
+
+        $stream = fopen('php://memory', 'r+') ?: throw new \RuntimeException('cannot open memory stream');
+        fwrite($stream, implode("\n", $answers) . "\n");
+        rewind($stream);
+
+        $consoleInput = new ArrayInput($input);
+        $consoleInput->setInteractive(true);
+        $consoleInput->setStream($stream);
+
+        $output = new SplitOutput(OutputInterface::VERBOSITY_NORMAL);
+        $exitCode = $application->run($consoleInput, $output);
+
+        return new ConsoleResult($exitCode, $output->stdout(), $output->stderr());
+    }
+
+    /**
+     * The application container, wired exactly as the commands see it.
+     */
+    protected function container(): ContainerInterface
+    {
+        $builder = new ContainerBuilder();
+        $builder->useAutowiring(true);
+
+        /** @var array<string, mixed> $definitions */
+        $definitions = require Bootstrap::projectRoot() . '/config/container.php';
+
+        $builder->addDefinitions($definitions);
+        $builder->addDefinitions([
+            'config.path' => $this->tempFile($this->defaultConfig()),
+            ClientInterface::class => $this->upstream(),
+            LoggerInterface::class => new NullLogger(),
+        ]);
+
+        return $builder->build();
+    }
+
+    /**
+     * A directory that is cleaned up with the test, for files a command writes.
+     */
+    protected function tempDirectory(): string
+    {
+        $path = sys_get_temp_dir() . '/ddns-cli-' . bin2hex(random_bytes(6));
+        mkdir($path, 0700, true);
+        $this->tempDirectories[] = $path;
+
+        return $path;
     }
 
     /**

@@ -6,6 +6,7 @@ namespace Ddns\Provider\Route53;
 
 use Aws\Credentials\Credentials;
 use Aws\Route53\Route53Client;
+use Ddns\Config\ConfigField;
 use Ddns\Config\ProviderConfig;
 use Ddns\Domain\Provider\DnsProvider;
 use Ddns\Domain\Provider\Exception\ProviderNotImplemented;
@@ -76,6 +77,29 @@ final class Route53ProviderFactory implements ProviderFactory
     public function requiredOptions(): array
     {
         return [];
+    }
+
+    /**
+     * Every field is optional, because the recommended way to run on AWS is to
+     * supply nothing here and let the credential chain do the work.
+     *
+     * @return list<ConfigField>
+     */
+    public function configFields(): array
+    {
+        return [
+            ConfigField::optionalSecret(
+                'key',
+                'AWS access key ID',
+                'Leave blank to use the AWS credential chain: environment, ~/.aws/credentials, '
+                . 'an EC2 instance profile, an ECS task role or IRSA. Recommended when running on AWS.',
+            ),
+            ConfigField::optionalSecret('secret', 'AWS secret access key'),
+            ConfigField::optionalSecret('session_token', 'AWS session token', 'Only for temporary STS credentials.'),
+            ConfigField::optional('profile', 'AWS profile name', 'A named profile from ~/.aws/credentials. Ignored when a key is set above.'),
+            ConfigField::optional('region', 'AWS region', 'Route53 is global; this only matters for the GovCloud and China partitions.', 'us-east-1'),
+            ConfigField::optional('zone_id', 'Hosted zone ID', 'An IAM policy scoped to one zone often cannot list zones, so naming it here skips the lookup.'),
+        ];
     }
 
     public function create(ProviderConfig $config): DnsProvider

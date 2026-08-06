@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns\Provider\Azure;
 
+use Ddns\Config\ConfigField;
 use Ddns\Config\ProviderConfig;
 use Ddns\Domain\Provider\DnsProvider;
 use Ddns\Provider\Azure\Auth\CachingTokenProvider;
@@ -81,6 +82,33 @@ final class AzureDnsProviderFactory implements ProviderFactory
     public function requiredOptions(): array
     {
         return self::REQUIRED_OPTIONS;
+    }
+
+    /**
+     * The subscription and resource group are mandatory; the credentials are
+     * not, because leaving them blank selects the managed identity attached to
+     * the host, which is the recommended way to run on Azure.
+     *
+     * @return list<ConfigField>
+     */
+    public function configFields(): array
+    {
+        return [
+            new ConfigField('subscription_id', 'Azure subscription ID'),
+            new ConfigField('resource_group', 'Resource group holding the zone'),
+            ConfigField::optional(
+                'tenant_id',
+                'Directory (tenant) ID',
+                'Leave the next three blank to authenticate with the managed identity attached to this host, '
+                . 'which keeps every secret out of the configuration file.',
+            ),
+            ConfigField::optional(
+                'client_id',
+                'Application (client) ID',
+                'For a user-assigned managed identity, set this and leave the secret blank.',
+            ),
+            ConfigField::optionalSecret('client_secret', 'Client secret', 'Supplying one selects service-principal authentication.'),
+        ];
     }
 
     public function create(ProviderConfig $config): DnsProvider
