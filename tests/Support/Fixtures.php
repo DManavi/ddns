@@ -32,6 +32,7 @@ final class Fixtures
         'route53' => false,
         // A service principal or managed identity, plus two mandatory options.
         'azuredns' => ['token' => false, 'options' => ['subscription_id', 'resource_group']],
+        'azureprivatedns' => ['token' => false, 'options' => ['subscription_id', 'resource_group']],
     ];
 
     public static function restClient(MockHttpClient $client, string $driver, string $baseUri): RestClient

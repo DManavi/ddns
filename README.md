@@ -48,7 +48,8 @@ makes a 60-second poll interval safe against provider rate limits.
 | `digitalocean` | Available | Domain Records API, fully paginated |
 | `vultr` | Available | DNS API v2, cursor pagination |
 | `cloudflare` | Available | API v4; zone IDs resolved once and cached |
-| `azuredns` | Available | Management REST API; service principal or managed identity |
+| `azuredns` | Available | Azure public DNS zones, via the management REST API |
+| `azureprivatedns` | Available | Azure Private DNS zones |
 | `route53` | Available | AWS SDK for PHP; supports the full AWS credential chain |
 
 ```console
@@ -222,10 +223,15 @@ Route53 records are written with `UPSERT`, so create and update are the same
 call. The driver refuses to touch alias records and records that use a routing
 policy, rather than silently replacing a CloudFront or load balancer target.
 
-**Azure DNS specifics.** `token` is not required, but `subscription_id` and
-`resource_group` are — `config:validate` reports either if missing. Microsoft
-archived the Azure SDK for PHP in 2023, so this driver calls the management
-REST API directly and adds no dependencies.
+**Azure DNS specifics.** Two drivers share one implementation: `azuredns` for
+public zones and `azureprivatedns` for private ones. They are separate Azure
+resource types with separate API versions, so they are separate drivers rather
+than a flag; configuration is otherwise identical. Microsoft archived the Azure
+SDK for PHP in 2023, so both call the management REST API directly and add no
+dependencies.
+
+`token` is not required, but `subscription_id` and `resource_group` are —
+`config:validate` reports either if missing.
 
 | Key | Required | Meaning |
 | --- | --- | --- |
@@ -265,6 +271,29 @@ Access tokens are cached until shortly before they expire, so a `watch` loop
 does not re-authenticate on every poll. Records are written with `PUT`, which is
 create-or-update. Alias records (`targetResource`) are refused rather than
 replaced, so a Traffic Manager or CDN target cannot be silently detached.
+
+**Private zones** (`azureprivatedns`) additionally:
+
+- Hold internal addresses, so you will almost certainly need
+  `server.allow_private_ips: true`, which is off by default.
+- May contain records Azure **auto-registers** for VMs on a linked virtual
+  network. Those cannot be changed by anyone — Azure rejects the write — so the
+  driver refuses them with an explanation rather than letting the update fail
+  with a platform error. Use a different hostname, or disable auto-registration
+  on the VNet link.
+
+```yaml
+server:
+  # Private zones resolve to internal addresses.
+  allow_private_ips: true
+
+providers:
+  azure-internal:
+    driver: azureprivatedns
+    subscription_id: ${AZURE_SUBSCRIPTION_ID}
+    resource_group: my-resource-group
+    # Same two auth options as the public driver.
+```
 
 **`hosts.<name>`** — the key is used both as the URL segment and the CLI
 argument, so keep it URL-safe.

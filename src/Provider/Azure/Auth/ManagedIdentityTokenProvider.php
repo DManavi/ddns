@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Ddns\Provider\Azure\Auth;
 
 use Ddns\Domain\Provider\Exception\AuthenticationFailed;
-use Ddns\Provider\Azure\AzureDnsProvider;
 use Ddns\Provider\Http\RestClient;
 
 /**
@@ -37,6 +36,8 @@ final class ManagedIdentityTokenProvider implements TokenProvider
          */
         private readonly ?string $clientId = null,
         private readonly string $resource = self::RESOURCE,
+        /** Reported on failure, so an error is attributed to the right driver. */
+        private readonly string $driver = 'azuredns',
     ) {
     }
 
@@ -54,7 +55,7 @@ final class ManagedIdentityTokenProvider implements TokenProvider
         $response = $this->client->get(self::IMDS_PATH, $query);
 
         if (!$response->isSuccessful()) {
-            throw AuthenticationFailed::for(AzureDnsProvider::DRIVER, sprintf(
+            throw AuthenticationFailed::for($this->driver, sprintf(
                 'The instance metadata service returned HTTP %d. This host may have no managed identity '
                 . 'attached, or may not be running on Azure at all - set "client_secret" to use a service '
                 . 'principal instead. (%s)',
@@ -67,7 +68,7 @@ final class ManagedIdentityTokenProvider implements TokenProvider
 
         if (!is_string($token) || $token === '') {
             throw AuthenticationFailed::for(
-                AzureDnsProvider::DRIVER,
+                $this->driver,
                 'The instance metadata service returned no access_token.',
             );
         }

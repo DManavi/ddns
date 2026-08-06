@@ -23,6 +23,8 @@ final class ClientCredentialsTokenProvider implements TokenProvider
         private readonly string $clientId,
         private readonly string $clientSecret,
         private readonly string $scope = AzureDnsProvider::DEFAULT_SCOPE,
+        /** Reported on failure, so an error is attributed to the right driver. */
+        private readonly string $driver = 'azuredns',
     ) {
     }
 
@@ -39,16 +41,13 @@ final class ClientCredentialsTokenProvider implements TokenProvider
         );
 
         if (!$response->isSuccessful()) {
-            throw AuthenticationFailed::for(AzureDnsProvider::DRIVER, $this->explain($response->json()));
+            throw AuthenticationFailed::for($this->driver, $this->explain($response->json()));
         }
 
         $token = $response->get('access_token');
 
         if (!is_string($token) || $token === '') {
-            throw AuthenticationFailed::for(
-                AzureDnsProvider::DRIVER,
-                'The token endpoint returned no access_token.',
-            );
+            throw AuthenticationFailed::for($this->driver, 'The token endpoint returned no access_token.');
         }
 
         $lifetime = $response->get('expires_in');
