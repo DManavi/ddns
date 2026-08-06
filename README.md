@@ -48,6 +48,7 @@ makes a 60-second poll interval safe against provider rate limits.
 | `digitalocean` | Available | Domain Records API, fully paginated |
 | `vultr` | Available | DNS API v2, cursor pagination |
 | `cloudflare` | Available | API v4; zone IDs resolved once and cached |
+| `azuredns` | Available | Management REST API; service principal or managed identity |
 | `route53` | Available | AWS SDK for PHP; supports the full AWS credential chain |
 
 ```console
@@ -221,6 +222,50 @@ Route53 records are written with `UPSERT`, so create and update are the same
 call. The driver refuses to touch alias records and records that use a routing
 policy, rather than silently replacing a CloudFront or load balancer target.
 
+**Azure DNS specifics.** `token` is not required, but `subscription_id` and
+`resource_group` are — `config:validate` reports either if missing. Microsoft
+archived the Azure SDK for PHP in 2023, so this driver calls the management
+REST API directly and adds no dependencies.
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `subscription_id` | yes | The Azure subscription holding the zone |
+| `resource_group` | yes | The resource group holding the zone |
+| `client_secret` | no | Present: service principal. Absent: managed identity |
+| `tenant_id` | for SP | Directory (tenant) ID |
+| `client_id` | for SP | Application (client) ID. Also selects a *user-assigned* managed identity |
+| `authority` | no | Sovereign clouds, e.g. `https://login.microsoftonline.us` |
+| `endpoint` | no | Sovereign clouds, e.g. `https://management.usgovcloudapi.net` |
+
+Two ways to authenticate:
+
+```yaml
+# Service principal — anywhere.
+azure:
+  driver: azuredns
+  subscription_id: ${AZURE_SUBSCRIPTION_ID}
+  resource_group: my-rg
+  tenant_id: ${AZURE_TENANT_ID}
+  client_id: ${AZURE_CLIENT_ID}
+  client_secret: ${AZURE_CLIENT_SECRET}
+
+# Managed identity — on an Azure VM, App Service or container.
+# No secret in the file at all.
+azure:
+  driver: azuredns
+  subscription_id: ${AZURE_SUBSCRIPTION_ID}
+  resource_group: my-rg
+```
+
+The identity needs the **DNS Zone Contributor** role on the zone or its
+resource group. Missing RBAC is the most common cause of a config that looks
+right but returns 403.
+
+Access tokens are cached until shortly before they expire, so a `watch` loop
+does not re-authenticate on every poll. Records are written with `PUT`, which is
+create-or-update. Alias records (`targetResource`) are refused rather than
+replaced, so a Traffic Manager or CDN target cannot be silently detached.
+
 **`hosts.<name>`** — the key is used both as the URL segment and the CLI
 argument, so keep it URL-safe.
 
@@ -393,6 +438,7 @@ src/
   Domain/           framework-free core: records, provider contract, DdnsUpdater
   Config/           YAML loading, env interpolation, validation
   Provider/         one directory per driver, plus the shared REST transport
+                    (Azure/Auth holds its OAuth2 token providers)
   Ip/               address resolution and trusted-proxy handling
   Http/             Slim actions, middleware, error translation
   Console/          Symfony Console commands
@@ -409,7 +455,9 @@ keeps the same use case usable from both front-ends.
    mapping.
 2. Add a factory. Extend `BearerTokenProviderFactory` if the API takes a bearer
    token; implement `ProviderFactory` directly if it authenticates some other
-   way and return `false` from `requiresToken()`, as Route53 does.
+   way and return `false` from `requiresToken()`, as Route53 and Azure do. Name
+   anything else the driver cannot work without in `requiredOptions()`, and
+   `config:validate` will check it.
 3. Register it in the `ProviderFactories` definition in `config/container.php`.
    The config validator picks up the new `driver:` value automatically.
 4. Add a test using `Ddns\Tests\Support\MockHttpClient`, following one of the

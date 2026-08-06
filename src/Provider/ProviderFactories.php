@@ -49,7 +49,10 @@ final class ProviderFactories implements \IteratorAggregate, \Countable
         $drivers = [];
 
         foreach ($this->factories as $factory) {
-            $drivers[$factory->driver()] = $factory->requiresToken();
+            $drivers[$factory->driver()] = [
+                'token' => $factory->requiresToken(),
+                'options' => $factory->requiredOptions(),
+            ];
         }
 
         return DriverCatalog::of($drivers);

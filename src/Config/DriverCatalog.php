@@ -7,11 +7,11 @@ namespace Ddns\Config;
 /**
  * What the loader needs to know about the available drivers.
  *
- * Drivers differ in how they authenticate: most take a single bearer token,
- * but Route53 uses AWS credentials that may not appear in the config file at
- * all - an EC2 instance profile, an ECS task role or IRSA supplies them at
- * runtime. The loader consults this rather than assuming every driver has a
- * `token`.
+ * Drivers differ in how they authenticate and in what they need configured.
+ * Most take a single bearer token; Route53 uses AWS credentials that may not
+ * appear in the config file at all; Azure needs a subscription and resource
+ * group, neither of which is the generic `token` field. The loader consults
+ * this rather than assuming every driver looks the same.
  *
  * Lives in Config, populated from the provider factories, so the config layer
  * does not have to import the provider layer.
@@ -19,28 +19,40 @@ namespace Ddns\Config;
 final class DriverCatalog
 {
     /**
-     * @param array<string, bool> $drivers driver name => whether `token` is required
+     * @param array<string, array{token: bool, options: list<string>}> $drivers
      */
     private function __construct(private readonly array $drivers)
     {
     }
 
     /**
-     * @param array<string, bool> $drivers
+     * Build from a `driver => requiresToken` map, or from a fuller definition
+     * naming the options the driver cannot work without.
+     *
+     * @param array<string, bool|array{token?: bool, options?: list<string>}> $drivers
      */
     public static function of(array $drivers): self
     {
-        return new self($drivers);
+        $normalised = [];
+
+        foreach ($drivers as $name => $definition) {
+            $normalised[$name] = is_bool($definition)
+                ? ['token' => $definition, 'options' => []]
+                : ['token' => $definition['token'] ?? true, 'options' => $definition['options'] ?? []];
+        }
+
+        return new self($normalised);
     }
 
     /**
-     * Every driver takes a bearer token. Convenient for tests.
+     * Every driver takes a bearer token and needs nothing else. Convenient for
+     * tests.
      *
      * @param list<string> $names
      */
     public static function tokenBased(array $names): self
     {
-        return new self(array_fill_keys($names, true));
+        return self::of(array_fill_keys($names, true));
     }
 
     public function has(string $driver): bool
@@ -50,7 +62,17 @@ final class DriverCatalog
 
     public function requiresToken(string $driver): bool
     {
-        return $this->drivers[$driver] ?? true;
+        return $this->drivers[$driver]['token'] ?? true;
+    }
+
+    /**
+     * Option keys this driver cannot work without.
+     *
+     * @return list<string>
+     */
+    public function requiredOptions(string $driver): array
+    {
+        return $this->drivers[$driver]['options'] ?? [];
     }
 
     /**

@@ -67,6 +67,17 @@ final class Route53ProviderFactory implements ProviderFactory
         return false;
     }
 
+    /**
+     * Nothing is mandatory: the zone is discovered by name and credentials can
+     * come entirely from the AWS chain.
+     *
+     * @return list<string>
+     */
+    public function requiredOptions(): array
+    {
+        return [];
+    }
+
     public function create(ProviderConfig $config): DnsProvider
     {
         if (!$this->isAvailable()) {

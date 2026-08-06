@@ -23,24 +23,43 @@ final class Fixtures
 {
     public const TOKEN = 'test-token-0123456789abcdef';
 
-    /** @var array<string, bool> driver => whether a token is required */
+    /** @var array<string, bool|array{token?: bool, options?: list<string>}> */
     public const DRIVERS = [
         'digitalocean' => true,
         'vultr' => true,
         'cloudflare' => true,
         // Credentials may come from the AWS chain instead of the config file.
         'route53' => false,
+        // A service principal or managed identity, plus two mandatory options.
+        'azuredns' => ['token' => false, 'options' => ['subscription_id', 'resource_group']],
     ];
 
     public static function restClient(MockHttpClient $client, string $driver, string $baseUri): RestClient
     {
+        return self::restClientWithHeaders($client, $driver, $baseUri, [
+            'Authorization' => 'Bearer secret-api-key',
+        ]);
+    }
+
+    /**
+     * A REST client with explicit headers, which may be a callable for drivers
+     * that authenticate with a rotating token.
+     *
+     * @param array<string, string>|callable(): array<string, string> $headers
+     */
+    public static function restClientWithHeaders(
+        MockHttpClient $client,
+        string $driver,
+        string $baseUri,
+        mixed $headers,
+    ): RestClient {
         return new RestClient(
             $client,
             new RequestFactory(),
             new StreamFactory(),
             $driver,
             $baseUri,
-            ['Authorization' => 'Bearer secret-api-key'],
+            $headers,
         );
     }
 
