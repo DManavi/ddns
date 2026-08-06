@@ -228,9 +228,8 @@ stripped: check that `mod_setenvif` is enabled and the `SetEnvIf` line is
 inside the right virtual host.
 
 **Shared hosting.** If you cannot edit the virtual host, the shipped
-`public/.htaccess` already contains the equivalent directives — set the site's
-document root to `public/` and ensure `AllowOverride All` is permitted. Nothing
-else is needed.
+`public/.htaccess` already contains the equivalent directives. See
+[Shared hosting](#shared-hosting) for the full layout.
 
 **Permissions.** The application never writes to disk, so the web user needs
 read access only. Keep the config file out of reach of everything else, since
@@ -310,6 +309,89 @@ Two other things worth knowing about CGI:
   Apache should execute and needs no `ExecCGI` of its own. PHP's
   `cgi.force_redirect`, on by default, separately refuses to run the binary
   when it is requested directly.
+
+### Shared hosting
+
+Shared hosting usually means three constraints at once: no shell, a document
+root you cannot move, and no way to run a daemon. All three are workable — this
+is a small application whose HTTP side is stateless and whose CLI side only
+needs to run occasionally.
+
+**Put the application outside the document root.** It contains your provider
+credentials; nothing in it should be reachable over HTTP.
+
+```
+/home/you/
+    ddns/            <- upload the whole project here, including vendor/
+        ddns.yaml    <- your config, with real tokens
+    public_html/     <- the document root you were given
+        index.php    <- one line, below
+        .htaccess    <- copied from ddns/public/.htaccess
+```
+
+`public_html/index.php` only has to hand over to the real front controller:
+
+```php
+<?php require '/home/you/ddns/public/index.php';
+```
+
+That works because the application resolves its own paths from where its source
+lives, not from the entry point — so it finds `vendor/`, `config/` and
+`ddns.yaml` without being told. Copy `ddns/public/.htaccess` alongside it and
+Apache is fully configured; see [Apache](#apache) for what that file does.
+
+**No shell or Composer?** Run `composer install --no-dev` on your own machine
+and upload `vendor/` with everything else. The lock file pins exact versions, so
+what you upload is what was tested.
+
+**If you cannot get above the document root**, put the application in a
+subdirectory of it and deny access to that subdirectory:
+
+```
+public_html/
+    index.php            <?php require __DIR__ . '/ddns-app/public/index.php';
+    .htaccess            copied from ddns-app/public/.htaccess
+    ddns-app/
+        .htaccess        Require all denied
+        ddns.yaml        your config
+```
+
+> The deny rule is not optional here. Without it `ddns-app/ddns.yaml` is an
+> ordinary static file: requesting it returns `200` and your provider token in
+> the response body. Confirm it after deploying — the first command must return
+> `403`, the second `200`:
+>
+> ```bash
+> curl -sI https://you.example.com/ddns-app/ddns.yaml | head -1
+> curl -sI https://you.example.com/health | head -1
+> ```
+
+**Choosing the PHP version.** Most control panels have a PHP selector; this
+needs 8.2 or newer with `curl`, `mbstring` and `xml`. The CLI binary is often
+versioned, so `php` may be 7.4 while `php83` is what you want — check with
+`php83 -v` and use that name in the cron line below.
+
+**Keeping records fresh.** There is no daemon, so `watch` is not the tool here;
+use the host's cron scheduler to run one-shot updates instead:
+
+```cron
+*/10 * * * * DDNS_CONFIG=/home/you/ddns/ddns.yaml /usr/local/bin/php83 /home/you/ddns/bin/ddns update --all >/dev/null 2>&1
+```
+
+Both an absolute `bin/ddns` path and `DDNS_CONFIG` work from any working
+directory, which is what cron gives you. Records already pointing at the right
+address cost one read and no writes, so a ten-minute interval is not wasteful.
+
+**Check it afterwards:**
+
+```bash
+curl -fsS https://you.example.com/health
+curl -fsS -H "Authorization: Bearer $TOKEN" https://you.example.com/v1/hosts/home
+```
+
+If the first works and the second returns `401`, Apache is stripping the
+`Authorization` header — see the [Apache](#apache) section, though the shipped
+`.htaccess` normally handles it.
 
 ## Configuration
 
