@@ -1,0 +1,62 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * CLI entrypoint.
+ *
+ * Shares the container, configuration and update logic with the HTTP
+ * entrypoint; only the adapter in front differs.
+ */
+
+use Ddns\Bootstrap;
+use Ddns\Config\Exception\ConfigurationError;
+use Ddns\Console\ConsoleApplicationFactory;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Output\ConsoleOutput;
+
+foreach ([__DIR__ . '/../vendor/autoload.php', __DIR__ . '/../../../autoload.php'] as $autoload) {
+    if (is_file($autoload)) {
+        require $autoload;
+
+        break;
+    }
+}
+
+if (!class_exists(Bootstrap::class)) {
+    fwrite(STDERR, "Dependencies are not installed. Run: composer install\n");
+
+    exit(1);
+}
+
+$output = new ConsoleOutput();
+
+try {
+    $input = new ArgvInput();
+
+    // Read before the application boots, because the container needs it.
+    $configPath = $input->getParameterOption(['--config', '-c'], null, true);
+
+    $container = Bootstrap::container(is_string($configPath) && $configPath !== '' ? $configPath : null);
+    $application = ConsoleApplicationFactory::create($container);
+
+    $application->getDefinition()->addOption(new InputOption(
+        'config',
+        'c',
+        InputOption::VALUE_REQUIRED,
+        'Path to the configuration file. Defaults to $DDNS_CONFIG, then ./ddns.yaml.',
+    ));
+
+    exit($application->run($input, $output));
+} catch (ConfigurationError $e) {
+    $output->getErrorOutput()->writeln('<error>Configuration error</error>');
+    $output->getErrorOutput()->writeln($e->getMessage());
+
+    exit(2);
+} catch (Throwable $e) {
+    $output->getErrorOutput()->writeln(sprintf('<error>%s</error>', $e->getMessage()));
+
+    exit(1);
+}

@@ -1,0 +1,19 @@
+/vendor/
+/.php-cs-fixer.cache
+/.phpunit.cache/
+/.phpunit.result.cache
+/composer.lock.bak
+
+# Local runtime configuration and secrets
+/.env
+/.env.local
+/ddns.yaml
+/ddns.yml
+/config/ddns.yaml
+/config/ddns.yml
+
+# Editor / OS noise
+/.idea/
+/.vscode/
+.DS_Store
+*.swp
