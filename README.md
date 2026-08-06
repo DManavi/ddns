@@ -605,8 +605,49 @@ $ ddns config:validate
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/health` | none | Liveness probe |
+| `GET` | `/openapi.json` | none | [OpenAPI description](#openapi) |
+| `GET` | `/openapi.yaml` | none | The same, as YAML |
 | `GET` | `/v1/hosts/{host}` | yes | The host's own config, token redacted |
 | `GET` `POST` | `/v1/hosts/{host}/update` | yes | Update the record |
+
+### OpenAPI
+
+Every endpoint is described by an OpenAPI 3.1 document the server publishes
+about itself:
+
+```console
+$ curl https://ddns.example.com/openapi.json
+$ curl https://ddns.example.com/openapi.yaml
+```
+
+Both are the same document in two formats. `servers` reports the URL it was
+fetched from, so a tool can call the API straight away:
+
+```bash
+# Browse it
+npx @redocly/cli preview-docs https://ddns.example.com/openapi.yaml
+
+# Generate a client
+npx @openapitools/openapi-generator-cli generate \
+    -i https://ddns.example.com/openapi.json -g python -o ./ddns-client
+```
+
+The document is generated from the application rather than maintained beside
+it: record types and outcomes are read from the same enums the server uses, and
+the test suite checks the documented paths and methods against the routes Slim
+actually registers, in both directions, and the documented response shapes
+against real responses. A documented endpoint that stopped existing, or a field
+that was renamed, fails the build.
+
+It is served without authentication. It describes shapes and status codes —
+everything on this page — and holds no configuration, no host names and no
+secrets. To withhold it anyway, deny the two paths at the web server:
+
+```apache
+<LocationMatch "^/openapi\.(json|yaml)$">
+    Require all denied
+</LocationMatch>
+```
 
 ### Authentication
 
@@ -645,6 +686,111 @@ curl -H "Authorization: Bearer $TOKEN" '.../v1/hosts/home/update?dry_run=1'
 ```
 
 `ip=auto` is treated as though nothing were supplied.
+
+### Endpoints
+
+#### `GET /health`
+
+Unauthenticated liveness probe. Reports counts only — never host names, which
+would be disclosure on an endpoint with no authentication.
+
+```console
+$ curl -s https://ddns.example.com/health
+{
+    "status": "ok",
+    "hosts_configured": 1,
+    "providers_configured": 1
+}
+```
+
+Returns `500` when the configuration is missing or invalid, which is what makes
+it useful as a container health check.
+
+#### `GET /v1/hosts/{host}`
+
+The host the presented token authenticates for, with the token redacted, plus
+the address the server attributes to the caller. Reading `client_ip` back is the
+quickest way to confirm a reverse-proxy setup before trusting an update.
+
+```console
+$ curl -s -H "Authorization: Bearer $TOKEN" https://ddns.example.com/v1/hosts/home
+{
+    "host": {
+        "name": "home",
+        "fqdn": "home.example.com",
+        "zone": "example.com",
+        "record": "home",
+        "provider": "do-personal",
+        "types": ["A", "AAAA"],
+        "ttl": 60,
+        "token": "****4567"
+    },
+    "client_ip": "203.0.113.7"
+}
+```
+
+There is deliberately no endpoint that lists every host: a token grants access
+to exactly one.
+
+#### `GET` `POST` `/v1/hosts/{host}/update`
+
+Points the host at an address. Parameters may be supplied in the query string
+or, for `POST`, in a JSON or form-encoded body — both sources are read.
+
+| Parameter | Type | Meaning |
+| --- | --- | --- |
+| `ip` | string | The address to publish. `myip`, `ipv4`, `ipv6` are aliases |
+| `dry_run` | boolean | Report what would change without writing |
+
+```console
+$ curl -s -H "Authorization: Bearer $TOKEN" \
+       'https://ddns.example.com/v1/hosts/home/update?ip=203.0.113.7'
+{
+    "host": "home",
+    "fqdn": "home.example.com",
+    "status": "updated",
+    "changed": true,
+    "records": [
+        {
+            "type": "A",
+            "status": "updated",
+            "ip": "203.0.113.7",
+            "previous": "203.0.113.1",
+            "reason": null,
+            "dry_run": false
+        }
+    ],
+    "client_ip": "203.0.113.7"
+}
+```
+
+`status` is the worst outcome across the records — `failed` if any failed,
+otherwise a change if anything changed. Branch on `changed` if all you need to
+know is whether the address moved. Each record reports its own outcome:
+
+| Outcome | Meaning |
+| --- | --- |
+| `created` | The record did not exist and was added |
+| `updated` | It pointed elsewhere and was corrected |
+| `unchanged` | It was already correct; nothing was sent to the provider |
+| `skipped` | No address of that family was available; `reason` says so |
+| `failed` | The provider refused; `reason` says why |
+
+A host listing `AAAA` on an IPv4-only link reports that record as `skipped`
+rather than failing the request. `unchanged` is what makes polling on a short
+interval safe.
+
+Errors share one envelope, with a stable `code` to branch on and a `message`
+for humans:
+
+```json
+{
+    "error": {
+        "code": "invalid_ip",
+        "message": "\"nonsense\" is not a valid IP address."
+    }
+}
+```
 
 ### Status codes
 

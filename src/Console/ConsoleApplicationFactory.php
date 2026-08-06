@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns\Console;
 
+use Ddns\Bootstrap;
 use Ddns\Console\Command\ConfigGetCommand;
 use Ddns\Console\Command\ConfigInitCommand;
 use Ddns\Console\Command\ConfigPathCommand;
@@ -22,7 +23,7 @@ use Symfony\Component\Console\Application;
  */
 final class ConsoleApplicationFactory
 {
-    public const VERSION = '1.0.0';
+    public const VERSION = Bootstrap::VERSION;
 
     public static function create(ContainerInterface $container): Application
     {
