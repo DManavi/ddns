@@ -86,9 +86,16 @@ abstract class ConsoleTestCase extends TestCase
      *
      * @param array<string, mixed> $input
      */
-    protected function runCommand(array $input, string $configYaml = '', int $verbosity = OutputInterface::VERBOSITY_NORMAL): ConsoleResult
-    {
-        $configPath = $this->tempFile($configYaml === '' ? $this->defaultConfig() : $configYaml);
+    protected function runCommand(
+        array $input,
+        string $configYaml = '',
+        int $verbosity = OutputInterface::VERBOSITY_NORMAL,
+        ?string $configPath = null,
+    ): ConsoleResult {
+        // bin/ddns reads --config before the container is built, so a test
+        // naming a file does the same rather than passing an option the
+        // commands never see.
+        $configPath ??= $this->tempFile($configYaml === '' ? $this->defaultConfig() : $configYaml);
 
         $builder = new ContainerBuilder();
         $builder->useAutowiring(true);

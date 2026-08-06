@@ -13,6 +13,15 @@ namespace Ddns\Config\Exception;
 final class ConfigurationError extends \RuntimeException
 {
     /**
+     * @param bool $namesPaths whether the message contains filesystem paths,
+     *                         which the HTTP front-end must not echo back
+     */
+    public function __construct(string $message, public readonly bool $namesPaths = false)
+    {
+        parent::__construct($message);
+    }
+
+    /**
      * @param list<string> $problems
      */
     public static function invalid(array $problems): self
@@ -22,14 +31,53 @@ final class ConfigurationError extends \RuntimeException
         return new self("The DDNS configuration is invalid:\n" . implode("\n", $lines));
     }
 
+    /**
+     * No configuration file exists yet.
+     *
+     * Distinct from {@see self::unreadable()} because the answer is different:
+     * there is nothing to fix in a file that was never written, so this points
+     * at the wizard instead of listing what is wrong.
+     *
+     * @param list<string> $candidates absolute paths that were tried
+     */
+    public static function notFound(array $candidates): self
+    {
+        return new self(sprintf(
+            "No configuration file found.\n\n"
+            . "Create one with:\n"
+            . "  ddns config:init\n\n"
+            . "Or write it yourself at one of these paths, starting from config/ddns.example.yaml:\n%s\n"
+            . 'Set DDNS_CONFIG, or pass --config, to keep it somewhere else.',
+            implode("\n", array_map(static fn (string $c): string => '  - ' . $c, $candidates)),
+        ), namesPaths: true);
+    }
+
+    /**
+     * A named file is not there.
+     *
+     * Separated from {@see self::unreadable()} because the two have different
+     * answers: a missing file is created, an unreadable one is a permissions
+     * problem, and conflating them sends people looking in the wrong place.
+     */
+    public static function missing(string $path): self
+    {
+        return new self(sprintf(
+            "Configuration file \"%s\" does not exist.\n\nCreate it with:\n  ddns config:init --config %s",
+            $path,
+            $path,
+        ), namesPaths: true);
+    }
+
     public static function unreadable(string $path): self
     {
-        return new self(sprintf('Configuration file "%s" does not exist or is not readable.', $path));
+        return is_file($path)
+            ? new self(sprintf('Configuration file "%s" is not readable. Check its permissions and owner.', $path), namesPaths: true)
+            : self::missing($path);
     }
 
     public static function malformed(string $path, string $detail): self
     {
-        return new self(sprintf('Configuration file "%s" could not be parsed: %s', $path, $detail));
+        return new self(sprintf('Configuration file "%s" could not be parsed: %s', $path, $detail), namesPaths: true);
     }
 
     public static function missingEnvironmentVariable(string $variable, string $keyPath): self

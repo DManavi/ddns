@@ -23,6 +23,9 @@ final class ConfigFile
     /** Owner-only: this file may hold tokens even when placeholders are used. */
     private const FILE_MODE = 0600;
 
+    /** @var list<string> */
+    private const SECTION_ORDER = ['server', 'providers', 'hosts'];
+
     private const HEADER = <<<'YAML'
         # ddns configuration
         #
@@ -69,13 +72,61 @@ final class ConfigFile
     }
 
     /**
+     * Whether the file carries comments that rewriting would actually lose.
+     *
+     * The header this class writes does not count: {@see self::render()} emits
+     * it again, so warning about it would train people to ignore the warning
+     * that matters.
+     */
+    public static function hasComments(string $contents): bool
+    {
+        $withoutHeader = str_starts_with($contents, self::HEADER)
+            ? substr($contents, strlen(self::HEADER))
+            : $contents;
+
+        return preg_match('/^[ \t]*#/m', $withoutHeader) === 1;
+    }
+
+    /**
      * @param array<array-key, mixed> $config
      */
     public static function render(array $config): string
     {
-        // Four levels of nesting before YAML collapses to inline notation is
+        // Six levels of nesting before YAML collapses to inline notation is
         // enough for hosts.<name>.types, the deepest structure in the file.
-        return self::HEADER . "\n\n" . Yaml::dump($config, 6, 2, Yaml::DUMP_NULL_AS_TILDE);
+        return self::HEADER . "\n\n" . Yaml::dump(self::ordered($config), 6, 2, Yaml::DUMP_NULL_AS_TILDE);
+    }
+
+    /**
+     * Put the known sections in their documented order.
+     *
+     * Without this a section added by `config:set` lands wherever it happened
+     * to be appended, so two files with identical content could read - and
+     * diff - differently.
+     *
+     * @param array<array-key, mixed> $config
+     *
+     * @return array<array-key, mixed>
+     */
+    private static function ordered(array $config): array
+    {
+        $ordered = [];
+
+        foreach (self::SECTION_ORDER as $section) {
+            if (array_key_exists($section, $config)) {
+                $ordered[$section] = $config[$section];
+            }
+        }
+
+        // Anything unrecognised keeps its position relative to the rest, rather
+        // than being dropped: this file is hand-editable.
+        foreach ($config as $key => $value) {
+            if (!array_key_exists($key, $ordered)) {
+                $ordered[$key] = $value;
+            }
+        }
+
+        return $ordered;
     }
 
     /**

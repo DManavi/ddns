@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ddns\Console;
 
 use Ddns\Config\Configuration;
+use Ddns\Config\Exception\ConfigurationError;
 use Ddns\Config\HostConfig;
 use Ddns\Support\Services;
 use Psr\Container\ContainerInterface;
@@ -28,6 +29,33 @@ abstract class AbstractDdnsCommand extends Command
     public function __construct(protected readonly ContainerInterface $container)
     {
         parent::__construct();
+    }
+
+    /**
+     * A missing or broken configuration is an ordinary outcome, not a crash.
+     *
+     * Without this the loader's exception escapes to Symfony's handler and is
+     * rendered as an unhandled error, complete with the file and line it came
+     * from - which tells a user nothing they can act on, and exits 1 where
+     * every other configuration problem exits 2.
+     */
+    public function run(InputInterface $input, OutputInterface $output): int
+    {
+        try {
+            return parent::run($input, $output);
+        } catch (\Throwable $e) {
+            // Caught broadly and re-thrown, because the configuration is
+            // resolved lazily through the container: nothing in the call chain
+            // declares what it can raise, so the type has to be checked here.
+            if (!$e instanceof ConfigurationError) {
+                throw $e;
+            }
+
+            $io = new SymfonyStyle($input, $this->humanOutput($input, $output));
+            $io->error($e->getMessage());
+
+            return self::INVALID;
+        }
     }
 
     /**
@@ -75,6 +103,19 @@ abstract class AbstractDdnsCommand extends Command
     }
 
     /**
+     * The configuration file this process would read.
+     *
+     * Resolving the path does not read the file, so this still answers when
+     * the contents are broken - which is exactly when someone is asking.
+     *
+     * @throws ConfigurationError when no file exists anywhere
+     */
+    protected function configPath(): string
+    {
+        return Services::string($this->container, 'config.path');
+    }
+
+    /**
      * @template T of object
      *
      * @param class-string<T> $id
@@ -98,6 +139,13 @@ abstract class AbstractDdnsCommand extends Command
         }
 
         return is_string($value) && preg_match('/^-?\d+$/', trim($value)) === 1 ? (int) $value : $fallback;
+    }
+
+    protected function stringArgument(InputInterface $input, string $name): string
+    {
+        $value = $input->getArgument($name);
+
+        return is_scalar($value) ? (string) $value : '';
     }
 
     /**

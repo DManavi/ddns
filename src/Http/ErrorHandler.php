@@ -82,12 +82,16 @@ final class ErrorHandler implements ErrorHandlerInterface
                 'ip_resolution_failed',
                 $exception->getMessage(),
             ],
-            // The message names config keys, not secret values, and a broken
-            // config is worth surfacing plainly to whoever is deploying it.
+            // A message naming config keys is worth surfacing plainly to
+            // whoever is deploying this. One naming filesystem paths is not:
+            // it reaches the client before any token can be checked, since
+            // the tokens themselves live in the configuration.
             $exception instanceof ConfigurationError => [
                 500,
                 'configuration_error',
-                $exception->getMessage(),
+                $exception->namesPaths
+                    ? 'The server is not configured. Check the server logs for details.'
+                    : $exception->getMessage(),
             ],
             default => [
                 500,
