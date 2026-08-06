@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ddns\Bootstrap;
 use Ddns\Config\ConfigLoader;
 use Ddns\Config\Configuration;
 use Ddns\Config\EnvInterpolator;
@@ -11,6 +12,7 @@ use Ddns\Domain\Provider\ProviderLocator;
 use Ddns\Domain\Update\DdnsUpdater;
 use Ddns\Http\Middleware\AuthenticationMiddleware;
 use Ddns\Http\Middleware\TrustedProxyMiddleware;
+use Ddns\Http\OpenApi\SwaggerUiAssets;
 use Ddns\Ip\ClientIpDetector;
 use Ddns\Ip\HttpIpResolver;
 use Ddns\Provider\Azure\AzureDnsProviderFactory;
@@ -145,4 +147,8 @@ return [
 
     TrustedProxyMiddleware::class => static fn (ContainerInterface $c): TrustedProxyMiddleware
         => new TrustedProxyMiddleware(Services::get($c, ClientIpDetector::class)),
+
+    // Needs the document root so it can notice a locally installed copy of the
+    // Swagger UI assets and prefer it over the CDN.
+    SwaggerUiAssets::class => static fn (): SwaggerUiAssets => new SwaggerUiAssets(Bootstrap::projectRoot() . '/public'),
 ];

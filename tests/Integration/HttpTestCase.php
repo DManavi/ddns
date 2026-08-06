@@ -6,6 +6,7 @@ namespace Ddns\Tests\Integration;
 
 use Ddns\Bootstrap;
 use Ddns\Http\AppFactoryBuilder;
+use Ddns\Http\OpenApi\SwaggerUiAssets;
 use Ddns\Tests\Support\MockHttpClient;
 use DI\ContainerBuilder;
 use PHPUnit\Framework\TestCase;
@@ -30,6 +31,12 @@ abstract class HttpTestCase extends TestCase
     private ?MockHttpClient $upstream = null;
 
     private ?string $configPath = null;
+
+    /**
+     * Where the application should look for locally installed Swagger UI
+     * assets. Left unset, it is a directory that has none.
+     */
+    protected ?string $assetDirectory = null;
 
     /**
      * The fake upstream provider API, created on first use.
@@ -167,6 +174,10 @@ abstract class HttpTestCase extends TestCase
             // application wiring.
             ClientInterface::class => $this->upstream(),
             LoggerInterface::class => new NullLogger(),
+            // Pointed at a directory with nothing in it, so the suite behaves
+            // the same whether or not the developer has installed a local copy
+            // of the Swagger UI assets into public/vendor.
+            SwaggerUiAssets::class => new SwaggerUiAssets($this->assetDirectory ?? sys_get_temp_dir() . '/ddns-no-assets'),
         ]);
 
         return AppFactoryBuilder::create($builder->build());

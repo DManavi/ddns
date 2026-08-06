@@ -61,11 +61,12 @@ final class ErrorHandler implements ErrorHandlerInterface
     private function classify(\Throwable $exception): array
     {
         return match (true) {
+            // Points at the documentation rather than listing endpoints,
+            // which is a list that goes stale every time one is added.
             $exception instanceof HttpNotFoundException => [
                 404,
                 'not_found',
-                'No such endpoint. Available: GET /health, GET /v1/hosts/{host}, '
-                . 'GET|POST /v1/hosts/{host}/update.',
+                'No such endpoint. The API is documented at /api, and described at /openapi.json.',
             ],
             $exception instanceof HttpMethodNotAllowedException => [
                 405,

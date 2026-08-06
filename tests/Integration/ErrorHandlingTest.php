@@ -12,7 +12,7 @@ final class ErrorHandlingTest extends HttpTestCase
 
         self::assertSame(404, $response->getStatusCode());
         self::assertSame('not_found', $this->at($response, 'error.code'));
-        self::assertStringContainsString('/v1/hosts/{host}/update', $this->atString($response, 'error.message'));
+        self::assertStringContainsString('/api', $this->atString($response, 'error.message'));
     }
 
     /**
