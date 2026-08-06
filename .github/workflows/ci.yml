@@ -39,8 +39,18 @@ jobs:
         with:
           composer-options: "--prefer-dist"
 
-      - name: Validate composer.json
-        run: composer validate --strict
+      # Not --strict: it rejects exact version constraints on principle, and
+      # ours are deliberate. Plain validate still fails when composer.json and
+      # composer.lock disagree, which is the check that matters here - it stops
+      # a dependency being changed without the lock being regenerated.
+      - name: Validate composer.json and lock
+        run: composer validate
+
+      # Pinning keeps the dependency set fixed, so something has to notice when
+      # a pinned version later turns out to be vulnerable. --locked audits what
+      # is actually installed rather than what the constraints permit.
+      - name: Audit dependencies for known advisories
+        run: composer audit --locked
 
       - name: Check formatting
         run: vendor/bin/php-cs-fixer fix --dry-run --diff
