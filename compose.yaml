@@ -12,6 +12,10 @@
 # Running both is harmless but redundant - pick whichever suits your network.
 #
 # For development use compose.dev.yaml instead.
+#
+# Requires Compose v2.24 or newer, for `env_file: required:`. Use the
+# `docker compose` subcommand: the standalone `docker-compose` v1 reached end
+# of life in July 2023 and cannot parse this file.
 
 name: ddns
 
