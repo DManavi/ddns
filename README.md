@@ -97,24 +97,8 @@ reverse proxy terminates TLS in front of it. Set `DDNS_HTTP_BIND=0.0.0.0:8080`
 to expose it directly. The container runs as uid 1000 with a read-only root
 filesystem and all capabilities dropped.
 
-**Development:**
-
-```bash
-docker compose -f compose.dev.yaml up
-```
-
-That works with no setup at all — `ddns.dev.yaml` is committed with placeholder
-credentials, enough to boot and answer `/health`. `src/`, `tests/`, `config/`,
-`public/` and `bin/` are bind-mounted, so edits take effect on the next request.
-Rebuild only when `composer.json` or the `Dockerfile` changes.
-
-Run the toolchain in the same image the application runs in:
-
-```bash
-docker compose -f compose.dev.yaml run --rm tools composer check
-docker compose -f compose.dev.yaml run --rm tools composer test
-docker compose -f compose.dev.yaml run --rm cli hosts:list
-```
+**Development:** `docker compose -f compose.dev.yaml up`, which needs no setup
+at all — see [Running it locally](#running-it-locally).
 
 The two stacks use different Compose project names (`ddns` and `ddns-dev`), so
 a dev stack can never collide with a production one on the same host.
@@ -1117,19 +1101,117 @@ being changed without the lock being regenerated.
 
 ## Development
 
+### Running it locally
+
+```bash
+docker compose -f compose.dev.yaml up
+```
+
+Then open <http://localhost:8080/>, which redirects to the
+[browsable API](#openapi). That is the whole setup — there is nothing to copy
+or edit first, because `ddns.dev.yaml` is committed with placeholder
+credentials, and the host token in it is committed too:
+
+```bash
+curl -H "Authorization: Bearer dev-token-0123456789abcdef" \
+     http://localhost:8080/v1/hosts/home
+```
+
+Editing anything under `src/`, `tests/`, `config/`, `public/` or `bin/` takes
+effect on the next request: those directories are bind-mounted, and the dev
+image turns opcache timestamp validation back on. Rebuild only when
+`composer.json` or the `Dockerfile` changes:
+
+```bash
+docker compose -f compose.dev.yaml build
+```
+
+Other things you will want:
+
+```bash
+# Follow the logs
+docker compose -f compose.dev.yaml logs -f server
+
+# Run the CLI in the same image
+docker compose -f compose.dev.yaml run --rm cli hosts:list
+docker compose -f compose.dev.yaml run --rm cli config:validate
+
+# Run the whole toolchain there too — no PHP needed on the host
+docker compose -f compose.dev.yaml run --rm tools composer check
+docker compose -f compose.dev.yaml run --rm tools composer test
+
+# Watch the polling loop work, on a 30-second interval with verbose output.
+# It sits behind a profile, so a plain `up` does not start it.
+docker compose -f compose.dev.yaml --profile watcher up watcher
+
+# Somewhere else if 8080 is taken
+DDNS_DEV_PORT=9090 docker compose -f compose.dev.yaml up
+
+# Stop and clean up
+docker compose -f compose.dev.yaml down
+```
+
+#### What works without any credentials
+
+Booting, `/health`, `/api`, `config:validate`, `hosts:list` and the entire test
+suite — no test touches the network.
+
+An **update** does not. Even `--dry-run` reads the current record from the
+provider before deciding what would change, so with the placeholder token it
+comes back with a clear rejection:
+
+```console
+$ docker compose -f compose.dev.yaml run --rm cli update --all --dry-run
+  Host   FQDN               Type   Status   Address   Detail
+  home   home.example.com   A      failed   -         Provider "digitalocean" rejected the configured
+                                                      API credentials. Unable to authenticate you
+```
+
+To make updates real, put a token in `.env` — `ddns.dev.yaml` reads
+`${DO_TOKEN:-dev-placeholder-token}`, so it is picked up with no further
+change:
+
+```bash
+echo 'DO_TOKEN=dop_v1_...' >> .env
+docker compose -f compose.dev.yaml up
+```
+
+Use a throwaway zone. `.env` is gitignored; `ddns.dev.yaml` is not, so never
+put a real credential in it.
+
+### Running it without Docker
+
+Requires PHP 8.2+ with `curl`, `mbstring` and `xml`.
+
 ```bash
 composer install
-composer test          # PHPUnit
-composer analyse       # PHPStan, level max
-composer fmt           # PHP-CS-Fixer
-composer check         # all three
+DDNS_CONFIG=ddns.dev.yaml php -S 127.0.0.1:8080 -t public public/index.php
 ```
 
-Or without installing PHP at all:
+The same dev configuration, so the same URLs and the same committed token work.
+For the CLI, `DDNS_CONFIG=ddns.dev.yaml ./bin/ddns hosts:list`.
+
+### The toolchain
 
 ```bash
-docker compose -f compose.dev.yaml run --rm tools composer check
+composer test          # PHPUnit
+composer analyse       # PHPStan, level max, no baseline
+composer fmt           # PHP-CS-Fixer, writes
+composer fmt:check     # PHP-CS-Fixer, reports only
+composer check         # all of the above, in the order CI runs them
 ```
+
+While working on one thing, run one thing:
+
+```bash
+vendor/bin/phpunit --testsuite unit
+vendor/bin/phpunit --filter DocsTest
+```
+
+No test touches the network, so the suite runs the same offline and takes about
+a second. CI runs the same checks individually, on PHP 8.2, 8.3 and 8.4 — the
+lower bound is the one that catches portability bugs, so a failure there is
+worth reproducing on 8.2 rather than only on whatever you have installed.
 
 ### Layout
 
