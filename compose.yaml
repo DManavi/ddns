@@ -1,37 +1,77 @@
-# Two ways to run the same application.
+# Production.
 #
-#   docker compose up server    HTTP endpoint on :8080
-#   docker compose up watcher   polling loop, no ports exposed
+#   cp config/ddns.example.yaml ddns.yaml   # edit it
+#   cp .env.example .env                    # put the real secrets here
+#   docker compose up -d
 #
-# Both share one image and one configuration file; pick whichever suits your
-# network. Running both at once is fine and harmless.
+# That starts the HTTP endpoint. If you would rather poll from inside your
+# network than expose an endpoint, run the watcher instead:
+#
+#   docker compose --profile watcher up -d
+#
+# Running both is harmless but redundant - pick whichever suits your network.
+#
+# For development use compose.dev.yaml instead.
+
+name: ddns
+
+x-common: &common
+  image: ${DDNS_IMAGE:-ddns:latest}
+  build:
+    context: .
+    target: runtime
+  restart: unless-stopped
+  environment:
+    DDNS_CONFIG: /config/ddns.yaml
+    DDNS_LOG_LEVEL: ${DDNS_LOG_LEVEL:-INFO}
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    # Long syntax with create_host_path disabled: if ddns.yaml is missing,
+    # Docker would otherwise silently create a *directory* with that name and
+    # the container would fail with a confusing parse error.
+    - type: bind
+      source: ./ddns.yaml
+      target: /config/ddns.yaml
+      read_only: true
+      bind:
+        create_host_path: false
+  # The application never writes to disk, so it does not need to.
+  read_only: true
+  tmpfs:
+    - /tmp
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   server:
-    build: .
-    image: ddns:local
-    restart: unless-stopped
+    <<: *common
     ports:
-      - "8080:8080"
-    environment:
-      DDNS_CONFIG: /config/ddns.yaml
-      DDNS_LOG_LEVEL: ${DDNS_LOG_LEVEL:-INFO}
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./ddns.yaml:/config/ddns.yaml:ro
+      # Bound to localhost by default: put a reverse proxy in front for TLS,
+      # and set server.trusted_proxies in ddns.yaml when you do. Override with
+      # DDNS_HTTP_BIND=0.0.0.0:8080 to expose it directly.
+      - "${DDNS_HTTP_BIND:-127.0.0.1:8080}:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 192M
 
   watcher:
-    build: .
-    image: ddns:local
-    restart: unless-stopped
-    command: ["bin/ddns", "watch", "--all", "--interval", "300"]
-    environment:
-      DDNS_CONFIG: /config/ddns.yaml
-      DDNS_LOG_LEVEL: ${DDNS_LOG_LEVEL:-INFO}
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./ddns.yaml:/config/ddns.yaml:ro
+    <<: *common
+    profiles: ["watcher"]
+    command: ["bin/ddns", "watch", "--all", "--interval", "${DDNS_WATCH_INTERVAL:-300}"]
+    # No HTTP listener, so the image healthcheck does not apply.
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 128M

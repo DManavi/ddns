@@ -1,0 +1,41 @@
+# Development configuration.
+#
+# Committed on purpose, so `docker compose -f compose.dev.yaml up` works with
+# no setup at all. The placeholder tokens are enough for the server to boot,
+# validate and answer /health.
+#
+# Export real values - or put them in .env - when you want an update to
+# actually reach a provider. Never put production credentials in this file: it
+# is version-controlled.
+
+server:
+  default_ttl: 60
+
+  # The dev container sits behind Docker's bridge, so a request from the host
+  # arrives from the gateway rather than from the real client. Trusting the
+  # private ranges here is what makes X-Forwarded-For testable locally.
+  #
+  # Production defaults to trusting nothing. Do not copy this list over there.
+  trusted_proxies:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+
+  # Locally the caller is almost always a private address, which production
+  # would refuse.
+  allow_private_ips: true
+
+providers:
+  dev:
+    driver: digitalocean
+    token: ${DO_TOKEN:-dev-placeholder-token}
+
+hosts:
+  home:
+    provider: dev
+    zone: example.com
+    name: home
+    types:
+      - A
+    ttl: 60
+    token: ${DEV_HOST_TOKEN:-dev-token-0123456789abcdef}
