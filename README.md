@@ -684,6 +684,20 @@ curl -u "home:$TOKEN" https://ddns.example.com/v1/hosts/home/update
 curl "https://ddns.example.com/v1/hosts/home/update?token=$TOKEN"
 ```
 
+When more than one arrives, they are tried in this order and **the first one
+found is the only one used**:
+
+1. the `token` query parameter;
+2. the `Authorization` header;
+3. HTTP Basic.
+
+The query string comes first because it is the only transport a caller has to
+add deliberately — a Basic credential can be re-sent by a browser that once
+answered this server's `WWW-Authenticate` challenge, without anyone intending
+it. A request carrying a valid header alongside a stale `?token=` is refused
+rather than quietly falling back to the one that works: authenticating with a
+credential the caller did not mean to use is worse than a 401 they can see.
+
 Comparison is constant-time, and an unknown host is indistinguishable from a
 wrong token, so the API cannot be used to enumerate configured host names.
 

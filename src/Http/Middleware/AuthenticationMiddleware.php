@@ -115,8 +115,29 @@ final class AuthenticationMiddleware implements MiddlewareInterface
         return $basic === null || $basic[0] === '' ? null : $basic[0];
     }
 
+    /**
+     * The credential this request is presenting.
+     *
+     * Order matters when more than one arrives, and the first one found is the
+     * only one tried - a request carrying a valid header and a stale query
+     * token is refused rather than quietly falling back to the one that works.
+     * Silently accepting a credential the caller did not mean to use is worse
+     * than a 401 they can see.
+     *
+     * The query string comes first because it is the only transport the caller
+     * has to add deliberately. A Basic credential can arrive without anyone
+     * intending it: this server answers a 401 with `WWW-Authenticate: Basic`,
+     * after which a browser re-sends saved credentials for the realm on every
+     * later request, and those would otherwise shadow an explicit `?token=`.
+     */
     private function extractToken(ServerRequestInterface $request): ?string
     {
+        $query = $request->getQueryParams()['token'] ?? null;
+
+        if (is_string($query) && $query !== '') {
+            return $query;
+        }
+
         $header = $request->getHeaderLine('Authorization');
 
         if (preg_match('/^Bearer\s+(.+)$/i', trim($header), $matches) === 1) {
@@ -129,17 +150,12 @@ final class AuthenticationMiddleware implements MiddlewareInterface
             return $basic[1];
         }
 
-        // Some server configurations consume the Basic header before PHP sees it.
+        // Some server configurations consume the Basic header before PHP sees
+        // it, so this is the same tier by another route rather than a fourth.
         $password = $request->getServerParams()['PHP_AUTH_PW'] ?? null;
 
         if (is_string($password) && $password !== '') {
             return $password;
-        }
-
-        $query = $request->getQueryParams()['token'] ?? null;
-
-        if (is_string($query) && $query !== '') {
-            return $query;
         }
 
         return null;

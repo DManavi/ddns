@@ -49,7 +49,9 @@ final class OpenApiDocument
                 'responses' => $this->responses(),
             ],
             // Applied to every operation unless overridden. The three schemes
-            // are alternatives: any one of them authenticates a request.
+            // are alternatives: any one of them authenticates a request. When
+            // several are sent at once the precedence is documented in
+            // `info.description`, since OpenAPI has no way to express it.
             'security' => [
                 ['bearerAuth' => []],
                 ['basicAuth' => []],
@@ -80,6 +82,12 @@ final class OpenApiDocument
                 Updates are idempotent. When a record already holds the requested
                 address nothing is sent to the provider and the outcome is `unchanged`,
                 which is what makes polling on a short interval safe.
+
+                Any one of the three security schemes authenticates a request. If more
+                than one is sent, they are tried in the order `token` query parameter,
+                `Authorization` header, then HTTP Basic — and the first one found is
+                the only one tried, so a valid header alongside a stale query token is
+                refused rather than falling back.
                 MARKDOWN,
             'license' => ['name' => 'MIT', 'identifier' => 'MIT'],
         ];

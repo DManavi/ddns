@@ -54,6 +54,91 @@ final class AuthenticationTest extends HttpTestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
+    /**
+     * When several credentials arrive at once, the query string is the one
+     * used. It is the only transport the caller has to add deliberately;
+     * a Basic credential can be re-sent by a browser that once answered this
+     * server's WWW-Authenticate challenge, without anyone intending it.
+     */
+    public function testTheQueryStringWinsOverBothHeaders(): void
+    {
+        $this->expectUnchangedFlow('203.0.113.7');
+
+        $response = $this->request('GET', '/v1/hosts/home/update?token=' . self::HOST_TOKEN, [
+            'Authorization' => 'Bearer the-wrong-token',
+        ]);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function testTheQueryStringWinsOverBasicAuth(): void
+    {
+        $this->expectUnchangedFlow('203.0.113.7');
+
+        $response = $this->request('GET', '/v1/hosts/home/update?token=' . self::HOST_TOKEN, [
+            'Authorization' => 'Basic ' . base64_encode('home:the-wrong-token'),
+        ]);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    public function testTheAuthorizationHeaderWinsOverBasicAuth(): void
+    {
+        // Only one Authorization header can be sent, so this is Bearer against
+        // the Basic password a server may have surfaced separately.
+        $this->expectUnchangedFlow('203.0.113.7');
+
+        $response = $this->requestWithServerParams(
+            'GET',
+            '/v1/hosts/home/update',
+            ['Authorization' => 'Bearer ' . self::HOST_TOKEN],
+            ['PHP_AUTH_USER' => 'home', 'PHP_AUTH_PW' => 'the-wrong-token'],
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /**
+     * The first credential found is the only one tried. Falling through to
+     * whichever one happens to work would mean authenticating a request with a
+     * credential the caller did not mean to use.
+     */
+    public function testAWrongQueryTokenIsNotRescuedByAValidHeader(): void
+    {
+        $response = $this->request('GET', '/v1/hosts/home/update?token=stale', [
+            'Authorization' => 'Bearer ' . self::HOST_TOKEN,
+        ]);
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    public function testAWrongBearerTokenIsNotRescuedByValidBasicCredentials(): void
+    {
+        $response = $this->requestWithServerParams(
+            'GET',
+            '/v1/hosts/home/update',
+            ['Authorization' => 'Bearer the-wrong-token'],
+            ['PHP_AUTH_USER' => 'home', 'PHP_AUTH_PW' => self::HOST_TOKEN],
+        );
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    /**
+     * An empty parameter is not a credential, so it must not consume the turn
+     * and lock out the header that follows it.
+     */
+    public function testAnEmptyQueryTokenFallsThroughToTheHeader(): void
+    {
+        $this->expectUnchangedFlow('203.0.113.7');
+
+        $response = $this->request('GET', '/v1/hosts/home/update?token=', [
+            'Authorization' => 'Bearer ' . self::HOST_TOKEN,
+        ]);
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
     public function testRejectsARequestWithNoCredentials(): void
     {
         $response = $this->request('GET', '/v1/hosts/home/update');
