@@ -17,6 +17,13 @@ use Dotenv\Dotenv;
  */
 final class Bootstrap
 {
+    /**
+     * The application version, reported by `ddns --version` and by the OpenAPI
+     * document. Lives here because both front-ends need it and neither should
+     * have to import the other.
+     */
+    public const VERSION = '1.0.0';
+
     /** @var list<string> relative to the project root, in order of preference */
     private const CONFIG_CANDIDATES = [
         'ddns.yaml',
