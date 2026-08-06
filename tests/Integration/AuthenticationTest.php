@@ -99,27 +99,46 @@ final class AuthenticationTest extends HttpTestCase
     }
 
     /**
-     * The first credential found is the only one tried. Falling through to
-     * whichever one happens to work would mean authenticating a request with a
-     * credential the caller did not mean to use.
+     * Swagger UI applies every scheme that has been authorised, and remembers
+     * them between reloads, so a value left in one transport travels along
+     * with the one actually being used. A stale credential must not mask a
+     * correct one: all of them carry the same secret for the same host, and
+     * the host comes from the route, so there is nothing to gain by insisting
+     * on the transport that happened to be checked first.
      */
-    public function testAWrongQueryTokenIsNotRescuedByAValidHeader(): void
+    public function testAStaleQueryTokenDoesNotMaskAValidHeader(): void
     {
+        $this->expectUnchangedFlow('203.0.113.7');
+
         $response = $this->request('GET', '/v1/hosts/home/update?token=stale', [
             'Authorization' => 'Bearer ' . self::HOST_TOKEN,
         ]);
 
-        self::assertSame(401, $response->getStatusCode());
+        self::assertSame(200, $response->getStatusCode());
     }
 
-    public function testAWrongBearerTokenIsNotRescuedByValidBasicCredentials(): void
+    public function testAStaleBearerTokenDoesNotMaskValidBasicCredentials(): void
     {
+        $this->expectUnchangedFlow('203.0.113.7');
+
         $response = $this->requestWithServerParams(
             'GET',
             '/v1/hosts/home/update',
             ['Authorization' => 'Bearer the-wrong-token'],
             ['PHP_AUTH_USER' => 'home', 'PHP_AUTH_PW' => self::HOST_TOKEN],
         );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /**
+     * Wrong everywhere is still wrong.
+     */
+    public function testSeveralWrongCredentialsAreStillRejected(): void
+    {
+        $response = $this->request('GET', '/v1/hosts/home/update?token=wrong-one', [
+            'Authorization' => 'Bearer wrong-two',
+        ]);
 
         self::assertSame(401, $response->getStatusCode());
     }
@@ -215,6 +234,44 @@ final class AuthenticationTest extends HttpTestCase
 
         self::assertSame($badToken->getStatusCode(), $unknown->getStatusCode());
         self::assertSame($this->json($badToken), $this->json($unknown));
+    }
+
+    /**
+     * A browser shown `WWW-Authenticate` opens its own credential dialog over
+     * whatever page made the request, which is what happens to anyone driving
+     * the API from the documentation page at /api. Swagger UI asks for JSON,
+     * and there is no human behind an XHR to answer a dialog anyway.
+     */
+    public function testDoesNotChallengeAClientThatAskedForJson(): void
+    {
+        $response = $this->request('GET', '/v1/hosts/home/update', ['Accept' => 'application/json']);
+
+        self::assertSame(401, $response->getStatusCode());
+        self::assertSame('', $response->getHeaderLine('WWW-Authenticate'));
+        // The error is still readable; only the browser-facing header is gone.
+        self::assertSame('unauthorised', $this->at($response, 'error.code'));
+    }
+
+    public function testStillChallengesABrowserBeingPointedAtTheUrl(): void
+    {
+        // This is what makes a router's "enter a URL, a username and a
+        // password" screen work, so it has to survive.
+        $response = $this->request('GET', '/v1/hosts/home/update', [
+            'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        ]);
+
+        self::assertStringStartsWith('Basic ', $response->getHeaderLine('WWW-Authenticate'));
+    }
+
+    public function testStillChallengesAClientThatStatedNoPreference(): void
+    {
+        // curl and most scripts send */* or nothing; assume a person may be
+        // behind it rather than withhold a header they might need.
+        foreach ([[], ['Accept' => '*/*']] as $headers) {
+            $response = $this->request('GET', '/v1/hosts/home/update', $headers);
+
+            self::assertStringStartsWith('Basic ', $response->getHeaderLine('WWW-Authenticate'));
+        }
     }
 
     public function testChallengesWithWwwAuthenticateSoBasicAuthClientsCanRetry(): void

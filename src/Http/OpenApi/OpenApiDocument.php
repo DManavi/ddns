@@ -83,11 +83,11 @@ final class OpenApiDocument
                 address nothing is sent to the provider and the outcome is `unchanged`,
                 which is what makes polling on a short interval safe.
 
-                Any one of the three security schemes authenticates a request. If more
-                than one is sent, they are tried in the order `token` query parameter,
-                `Authorization` header, then HTTP Basic — and the first one found is
-                the only one tried, so a valid header alongside a stale query token is
-                refused rather than falling back.
+                Any one of the three security schemes authenticates a request. Sending
+                several is fine: each is checked, so a stale value in one cannot mask a
+                correct one in another. The order — `token` query parameter,
+                `Authorization` header, then HTTP Basic — decides which is used when
+                more than one is valid.
                 MARKDOWN,
             'license' => ['name' => 'MIT', 'identifier' => 'MIT'],
         ];
@@ -621,7 +621,9 @@ final class OpenApiDocument
                 . 'so this endpoint cannot be used to discover which hosts exist.',
                 'unauthorised',
                 ['WWW-Authenticate' => [
-                    'description' => 'Offers HTTP Basic, so a browser or router prompts for credentials.',
+                    'description' => 'Offers HTTP Basic, so a browser or router prompts for credentials. '
+                        . 'Absent when the request asked for `application/json`, so that a browser does not '
+                        . 'open a credential dialog over a page driving the API.',
                     'schema' => ['type' => 'string'],
                 ]],
             ),
