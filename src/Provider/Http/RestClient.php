@@ -19,7 +19,10 @@ use Psr\Http\Message\StreamFactoryInterface;
 final class RestClient
 {
     /**
-     * @param array<string, string> $defaultHeaders typically the Authorization header
+     * @param array<string, string>|callable(): array<string, string> $defaultHeaders
+     *                                                                                typically the Authorization header. A callable is resolved on every
+     *                                                                                request, which is what lets a driver authenticate with a rotating
+     *                                                                                OAuth token rather than a static key.
      */
     public function __construct(
         private readonly ClientInterface $http,
@@ -27,7 +30,7 @@ final class RestClient
         private readonly StreamFactoryInterface $streamFactory,
         private readonly string $driver,
         private readonly string $baseUri,
-        private readonly array $defaultHeaders = [],
+        private readonly mixed $defaultHeaders = [],
     ) {
     }
 
@@ -48,11 +51,12 @@ final class RestClient
     }
 
     /**
-     * @param array<string, mixed> $body
+     * @param array<string, mixed>      $body
+     * @param array<string, string|int> $query
      */
-    public function put(string $path, array $body): RestResponse
+    public function put(string $path, array $body, array $query = []): RestResponse
     {
-        return $this->send('PUT', $path, [], $body);
+        return $this->send('PUT', $path, $query, $body);
     }
 
     /**
@@ -61,6 +65,16 @@ final class RestClient
     public function patch(string $path, array $body): RestResponse
     {
         return $this->send('PATCH', $path, [], $body);
+    }
+
+    /**
+     * A form-encoded POST, as OAuth2 token endpoints require.
+     *
+     * @param array<string, string> $fields
+     */
+    public function postForm(string $path, array $fields): RestResponse
+    {
+        return $this->send('POST', $path, [], null, http_build_query($fields));
     }
 
     /**
@@ -74,20 +88,30 @@ final class RestClient
 
     /**
      * @param array<string, string|int> $query
-     * @param array<string, mixed>|null $body
+     * @param array<string, mixed>|null $body     sent as JSON
+     * @param string|null               $formBody sent as x-www-form-urlencoded
      */
-    private function send(string $method, string $path, array $query, ?array $body): RestResponse
-    {
+    private function send(
+        string $method,
+        string $path,
+        array $query,
+        ?array $body,
+        ?string $formBody = null,
+    ): RestResponse {
         $request = $this->requestFactory
             ->createRequest($method, $this->url($path, $query))
             ->withHeader('Accept', 'application/json')
             ->withHeader('User-Agent', 'ddns/1.0 (+https://github.com/DManavi/ddns)');
 
-        foreach ($this->defaultHeaders as $name => $value) {
+        foreach ($this->resolveDefaultHeaders() as $name => $value) {
             $request = $request->withHeader($name, $value);
         }
 
-        if ($body !== null) {
+        if ($formBody !== null) {
+            $request = $request
+                ->withHeader('Content-Type', 'application/x-www-form-urlencoded')
+                ->withBody($this->streamFactory->createStream($formBody));
+        } elseif ($body !== null) {
             $encoded = json_encode($body, JSON_THROW_ON_ERROR);
             $request = $request
                 ->withHeader('Content-Type', 'application/json')
@@ -105,6 +129,30 @@ final class RestClient
         }
 
         return RestResponse::fromPsrResponse($this->driver, $response);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function resolveDefaultHeaders(): array
+    {
+        $headers = is_callable($this->defaultHeaders)
+            ? ($this->defaultHeaders)()
+            : $this->defaultHeaders;
+
+        if (!is_array($headers)) {
+            return [];
+        }
+
+        $resolved = [];
+
+        foreach ($headers as $name => $value) {
+            if (is_string($name) && is_string($value)) {
+                $resolved[$name] = $value;
+            }
+        }
+
+        return $resolved;
     }
 
     /**

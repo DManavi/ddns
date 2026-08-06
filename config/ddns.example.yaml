@@ -65,6 +65,30 @@ providers:
   #   # explicitly to skip the name-to-ID lookup.
   #   zone_id: ${CF_ZONE_ID}
 
+  # Azure DNS. Needs no `token` either. With a client_secret it authenticates
+  # as a service principal; without one it uses the managed identity attached to
+  # the host (VM, App Service, container), which is the recommended way to run
+  # on Azure since no secret then appears in this file.
+  #
+  # The identity needs the "DNS Zone Contributor" role on the zone or its
+  # resource group.
+  # azure-main:
+  #   driver: azuredns
+  #   subscription_id: ${AZURE_SUBSCRIPTION_ID}
+  #   resource_group: my-resource-group
+  #
+  #   # Service principal. Omit client_secret to use a managed identity.
+  #   tenant_id: ${AZURE_TENANT_ID}
+  #   client_id: ${AZURE_CLIENT_ID}
+  #   client_secret: ${AZURE_CLIENT_SECRET}
+  #
+  #   # For a user-assigned managed identity, set client_id only - a host with
+  #   # several identities attached cannot be guessed.
+  #
+  #   # Optional, for sovereign clouds:
+  #   # authority: https://login.microsoftonline.us
+  #   # endpoint: https://management.usgovcloudapi.net
+
   # AWS Route53. Unlike the others this needs no `token`: when no credentials
   # are given the AWS default chain runs, picking them up from the environment,
   # ~/.aws/credentials, an EC2 instance profile, an ECS task role or IRSA.

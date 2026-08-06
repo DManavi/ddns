@@ -224,10 +224,23 @@ final class ConfigLoader
                 );
             }
 
+            /** @var array<string, mixed> $options */
             $options = $definition;
             unset($options['driver'], $options['token']);
 
-            /** @var array<string, mixed> $options */
+            foreach ($this->drivers->requiredOptions($driver) as $required) {
+                $value = $options[$required] ?? null;
+
+                if (!is_string($value) || trim($value) === '') {
+                    $this->problems->addf(
+                        '"%s.%s" is required by the "%s" driver.',
+                        $path,
+                        $required,
+                        $driver,
+                    );
+                }
+            }
+
             $providers[$name] = new ProviderConfig($name, $driver, $token, $options);
         }
 

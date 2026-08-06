@@ -45,5 +45,14 @@ interface ProviderFactory
      */
     public function requiresToken(): bool;
 
+    /**
+     * Option keys this driver cannot work without, so the configuration loader
+     * can report a missing one up front rather than letting it fail at
+     * update time.
+     *
+     * @return list<string>
+     */
+    public function requiredOptions(): array;
+
     public function create(ProviderConfig $config): DnsProvider;
 }

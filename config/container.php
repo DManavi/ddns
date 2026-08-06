@@ -13,6 +13,7 @@ use Ddns\Http\Middleware\AuthenticationMiddleware;
 use Ddns\Http\Middleware\TrustedProxyMiddleware;
 use Ddns\Ip\ClientIpDetector;
 use Ddns\Ip\HttpIpResolver;
+use Ddns\Provider\Azure\AzureDnsProviderFactory;
 use Ddns\Provider\Cloudflare\CloudflareProviderFactory;
 use Ddns\Provider\DigitalOcean\DigitalOceanProviderFactory;
 use Ddns\Provider\ProviderFactories;
@@ -71,6 +72,7 @@ return [
             new DigitalOceanProviderFactory($http, $requests, $streams),
             new VultrProviderFactory($http, $requests, $streams),
             new CloudflareProviderFactory($http, $requests, $streams),
+            new AzureDnsProviderFactory($http, $requests, $streams),
             new Route53ProviderFactory(),
         );
     },

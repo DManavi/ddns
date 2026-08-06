@@ -312,4 +312,78 @@ final class ConfigLoaderTest extends TestCase
     {
         self::assertNull(Fixtures::configuration(Fixtures::rawConfig())->findHost('nope'));
     }
+
+    // ------------------------------------------- driver credential styles
+
+    /**
+     * Route53 and Azure authenticate with a cloud credential chain, which may
+     * supply everything at runtime, so demanding a token would block the
+     * normal way to run on those platforms.
+     */
+    public function testADriverBackedByACredentialChainNeedsNoToken(): void
+    {
+        $raw = Fixtures::rawConfig();
+        $raw['providers']['p1'] = ['driver' => 'route53'];
+
+        self::assertSame('route53', Fixtures::configuration($raw)->provider('p1')->driver());
+    }
+
+    /**
+     * Azure needs a subscription and resource group, neither of which is the
+     * generic token field, so nothing else would catch them missing.
+     */
+    public function testReportsOptionsARequiringDriverCannotWorkWithoutThem(): void
+    {
+        $raw = Fixtures::rawConfig();
+        $raw['providers']['p1'] = ['driver' => 'azuredns'];
+
+        try {
+            Fixtures::configuration($raw);
+            self::fail('Expected a ConfigurationError.');
+        } catch (ConfigurationError $e) {
+            self::assertStringContainsString('"providers.p1.subscription_id" is required', $e->getMessage());
+            self::assertStringContainsString('"providers.p1.resource_group" is required', $e->getMessage());
+        }
+    }
+
+    public function testAcceptsADriverWithAllItsRequiredOptions(): void
+    {
+        $raw = Fixtures::rawConfig();
+        $raw['providers']['p1'] = [
+            'driver' => 'azuredns',
+            'subscription_id' => 'sub-1',
+            'resource_group' => 'rg-1',
+        ];
+
+        $provider = Fixtures::configuration($raw)->provider('p1');
+
+        self::assertSame('azuredns', $provider->driver());
+        self::assertSame('sub-1', $provider->option('subscription_id'));
+    }
+
+    public function testABlankRequiredOptionIsTreatedAsMissing(): void
+    {
+        $raw = Fixtures::rawConfig();
+        $raw['providers']['p1'] = [
+            'driver' => 'azuredns',
+            'subscription_id' => '   ',
+            'resource_group' => 'rg-1',
+        ];
+
+        $this->expectException(ConfigurationError::class);
+        $this->expectExceptionMessage('subscription_id');
+
+        Fixtures::configuration($raw);
+    }
+
+    public function testTokenBasedDriversStillRequireTheirToken(): void
+    {
+        $raw = Fixtures::rawConfig();
+        $raw['providers']['p1'] = ['driver' => 'cloudflare'];
+
+        $this->expectException(ConfigurationError::class);
+        $this->expectExceptionMessage('providers.p1.token');
+
+        Fixtures::configuration($raw);
+    }
 }
