@@ -15,6 +15,46 @@ final class ErrorHandlingTest extends HttpTestCase
         self::assertStringContainsString('/v1/hosts/{host}/update', $this->atString($response, 'error.message'));
     }
 
+    /**
+     * A misconfiguration that names config keys helps whoever is deploying
+     * this, so it is reported as-is.
+     */
+    public function testAnInvalidConfigurationIsReportedPlainly(): void
+    {
+        $response = $this->request('GET', '/v1/hosts/home', [], '203.0.113.7', <<<'YAML'
+            providers:
+              p1:
+                driver: nosuchdriver
+                token: t
+            hosts:
+              home:
+                provider: p1
+                zone: example.com
+                token: host-token-0123456789abcdef
+            YAML);
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertSame('configuration_error', $this->at($response, 'error.code'));
+        self::assertStringContainsString('nosuchdriver', $this->atString($response, 'error.message'));
+    }
+
+    /**
+     * A missing file is different: the message names filesystem paths, and it
+     * reaches the client before any token can be checked - the tokens live in
+     * the configuration that is missing.
+     */
+    public function testAMissingConfigurationDoesNotDiscloseFilesystemPaths(): void
+    {
+        $response = $this->requestWithConfigPath('GET', '/v1/hosts/home', '/nonexistent/secret-dir/ddns.yaml');
+
+        $message = $this->atString($response, 'error.message');
+
+        self::assertSame(500, $response->getStatusCode());
+        self::assertStringNotContainsString('/nonexistent/secret-dir', $message);
+        self::assertStringNotContainsString('config:init', $message);
+        self::assertStringContainsString('not configured', $message);
+    }
+
     public function testDisallowedMethodsReturn405(): void
     {
         $response = $this->request('DELETE', '/health');

@@ -233,12 +233,38 @@ final class ConfigLoaderTest extends TestCase
         self::assertSame(120, Fixtures::configuration($raw, ['TTL' => '120'])->host('home')->ttl());
     }
 
-    public function testUnreadableFileProducesAHelpfulError(): void
+    public function testAMissingFilePointsAtTheWizard(): void
     {
+        // Nothing to diagnose in a file that was never written, so the answer
+        // is how to create one.
         $this->expectException(ConfigurationError::class);
-        $this->expectExceptionMessage('does not exist or is not readable');
+        $this->expectExceptionMessage('ddns config:init --config /nonexistent/ddns.yaml');
 
         Fixtures::loader()->load('/nonexistent/ddns.yaml');
+    }
+
+    public function testAnUnreadableFileReportsPermissionsRatherThanAbsence(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'ddns-') ?: throw new \RuntimeException('tempnam failed');
+        file_put_contents($path, "hosts: {}\n");
+        chmod($path, 0000);
+
+        if (is_readable($path)) {
+            // Running as root, where permissions do not apply.
+            chmod($path, 0600);
+            unlink($path);
+            self::markTestSkipped('The file is readable regardless of its mode.');
+        }
+
+        try {
+            $this->expectException(ConfigurationError::class);
+            $this->expectExceptionMessage('is not readable');
+
+            Fixtures::loader()->load($path);
+        } finally {
+            chmod($path, 0600);
+            unlink($path);
+        }
     }
 
     public function testParsesAYamlFileFromDisk(): void

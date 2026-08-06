@@ -72,6 +72,21 @@ abstract class HttpTestCase extends TestCase
         return $this->app($configYaml === '' ? $this->defaultConfig() : $configYaml)->handle($request);
     }
 
+    /**
+     * Drive the application against a configuration file that may not exist,
+     * which `request()` cannot express because it always writes one.
+     */
+    protected function requestWithConfigPath(string $method, string $path, string $configPath): ResponseInterface
+    {
+        $request = (new ServerRequestFactory())->createServerRequest(
+            $method,
+            'https://ddns.test' . $path,
+            ['REMOTE_ADDR' => '203.0.113.7'],
+        );
+
+        return $this->appWithConfigPath($configPath)->handle($request);
+    }
+
     protected function handle(ServerRequestInterface $request, string $configYaml = ''): ResponseInterface
     {
         return $this->app($configYaml === '' ? $this->defaultConfig() : $configYaml)->handle($request);
@@ -131,6 +146,14 @@ abstract class HttpTestCase extends TestCase
         $this->configPath = tempnam(sys_get_temp_dir(), 'ddns-it-') ?: throw new \RuntimeException('tempnam failed');
         file_put_contents($this->configPath, $configYaml);
 
+        return $this->appWithConfigPath($this->configPath);
+    }
+
+    /**
+     * @return App<ContainerInterface|null>
+     */
+    protected function appWithConfigPath(string $configPath): App
+    {
         $builder = new ContainerBuilder();
         $builder->useAutowiring(true);
 
@@ -139,7 +162,7 @@ abstract class HttpTestCase extends TestCase
 
         $builder->addDefinitions($definitions);
         $builder->addDefinitions([
-            'config.path' => $this->configPath,
+            'config.path' => $configPath,
             // Only the outbound client is faked; everything else is the real
             // application wiring.
             ClientInterface::class => $this->upstream(),

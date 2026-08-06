@@ -79,11 +79,9 @@ final class Bootstrap
             }
         }
 
-        throw new ConfigurationError(sprintf(
-            "No configuration file found. Set DDNS_CONFIG, or create one of:\n%s\n"
-            . 'Start from config/ddns.example.yaml.',
-            implode("\n", array_map(static fn (string $c): string => '  - ' . $root . '/' . $c, self::CONFIG_CANDIDATES)),
-        ));
+        throw ConfigurationError::notFound(
+            array_map(static fn (string $c): string => $root . '/' . $c, self::CONFIG_CANDIDATES),
+        );
     }
 
     private static function loadDotEnv(): void

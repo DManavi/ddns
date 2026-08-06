@@ -679,12 +679,27 @@ $ ddns config:init [--config=PATH] [--env=PATH] [--force]
 $ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run] [--json]
 $ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once] [--json]
 $ ddns hosts:list [--json]
-$ ddns config:validate [<file>] [--json]
 $ ddns providers:list [--json]
+
+$ ddns config:show [--raw] [--json]
+$ ddns config:get <key> [--json]
+$ ddns config:set <key> <value> [--force]
+$ ddns config:path [--json]
+$ ddns config:validate [<file>] [--json]
 ```
 
-`config:init` is [the setup wizard](#the-wizard); everything else needs a
-configuration file to already exist.
+`config:init` is [the setup wizard](#the-wizard). Everything else needs a
+configuration file to exist, and says so — naming the wizard rather than
+failing with a stack trace:
+
+```console
+$ ddns hosts:list
+ [ERROR] No configuration file found.
+
+         Create one with:
+           ddns config:init
+...
+```
 
 ```console
 $ ddns update --all
@@ -698,6 +713,66 @@ $ ddns update --all
 
 Exit codes: `0` success, `1` at least one record failed, `2` invalid
 configuration or arguments.
+
+### Managing the configuration
+
+Four commands for inspecting and changing the file without opening an editor.
+
+```console
+$ ddns config:path                       # which file is in use
+/srv/ddns/ddns.yaml
+
+$ ddns config:get hosts.home.ttl         # one value, as written
+60
+
+$ ddns config:set hosts.home.ttl 600     # change it
+ [OK] hosts.home.ttl: 60 -> 600
+
+$ ddns config:show                       # everything, secrets masked
+```
+
+`config:show` has two views. By default it shows the **effective**
+configuration — what the application concluded, with defaults filled in, which
+answers "why is it behaving like this?". With `--raw` it shows the file as
+written, which is what `config:set` edits.
+
+Values are read and written exactly as they appear in the file, so a `${VAR}`
+placeholder stays a placeholder rather than being resolved to the secret behind
+it. Secrets written literally are masked in every view, so the output is safe to
+paste into a bug report.
+
+`config:set` parses the value as YAML, so types come out right rather than
+everything becoming a string:
+
+```bash
+ddns config:set server.default_ttl 600          # number
+ddns config:set server.allow_private_ips true   # boolean
+ddns config:set hosts.home.types '[A, AAAA]'    # list
+ddns config:set hosts.home.name '@'             # string
+```
+
+A value that is not valid YAML is taken literally — `@` opens the zone apex
+rather than a parse error — unless it starts a list or a mapping, where a
+malformed `[A, AAAA` is reported instead of quietly becoming a string.
+
+Two things it will not do:
+
+- **Write a file that does not load.** The result is validated first, so a typo
+  cannot leave a configuration the server refuses to start with. On failure
+  nothing is written.
+- **Discard your comments silently.** Rewriting the file loses them, so it asks
+  first — `--force`, or `--no-interaction`, to skip. A file written by
+  `config:init` needs no confirmation, since its header is re-emitted.
+
+`config:get` exits `1` when the key is not set, so a script can tell an absent
+setting from an empty one, and lists what *is* available at that level.
+
+`config:path` is the exception to the rule above: it answers even when the file
+is missing, because that is when you need it.
+
+```bash
+$EDITOR "$(ddns config:path)"
+```
 
 ### JSON output
 
