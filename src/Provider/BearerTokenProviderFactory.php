@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns\Provider;
 
+use Ddns\Config\ConfigField;
 use Ddns\Provider\Http\RestClient;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
@@ -42,6 +43,19 @@ abstract class BearerTokenProviderFactory implements ProviderFactory
     public function requiredOptions(): array
     {
         return [];
+    }
+
+    /**
+     * A bearer token and nothing else, which is the whole configuration for
+     * most drivers.
+     *
+     * @return list<ConfigField>
+     */
+    public function configFields(): array
+    {
+        return [
+            ConfigField::secret('token', sprintf('%s API token', $this->description())),
+        ];
     }
 
     protected function restClient(string $baseUri, string $token): RestClient

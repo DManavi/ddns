@@ -129,12 +129,22 @@ enables graceful shutdown of `watch`.
 
 ```bash
 composer install --no-dev
-cp config/ddns.example.yaml ddns.yaml
-cp .env.example .env
 
-./bin/ddns config:validate      # check before going near a provider
+./bin/ddns config:init          # answer a few questions
 ./bin/ddns update --all         # one-shot
 ./bin/ddns watch --all          # keep running
+```
+
+`config:init` asks which provider hosts your zone, what it needs, and which
+name to keep in sync. See [the wizard](#the-wizard) for what it writes and
+where. To configure by hand instead:
+
+```bash
+cp config/ddns.example.yaml ddns.yaml
+cp .env.example .env
+$EDITOR ddns.yaml
+
+./bin/ddns config:validate      # check before going near a provider
 ```
 
 To serve HTTP, point any web server at `public/`:
@@ -425,6 +435,34 @@ hosts:
 `$DDNS_CONFIG`, then `./ddns.yaml`, `./ddns.yml`, `./config/ddns.yaml`,
 `./config/ddns.yml`; `--config` overrides all of them.
 
+### The wizard
+
+```console
+$ ddns config:init [--config=PATH] [--env=PATH] [--force]
+```
+
+Asks which provider hosts the zone, whatever that provider needs, and which
+name to keep in sync. The questions come from the driver itself, so each one is
+asked for exactly what it uses — a subscription and resource group for Azure,
+nothing at all for Route53 when the AWS credential chain will supply it.
+
+Two things it will not do:
+
+- **Write a credential into the configuration file.** Each secret becomes a
+  `${VAR}` placeholder and the value is appended to `.env`, so the
+  configuration stays safe to commit. Both files are written `0600`.
+- **Produce a file that does not load.** The answers are validated before
+  anything is written, so `config:validate` cannot then reject the result.
+
+The token an HTTP client will present is generated rather than asked for —
+it is a secret nobody has a reason to choose. Re-running is safe: it refuses to
+replace an existing configuration without `--force`, and asks before changing
+a value already in `.env`.
+
+`--env` writes the secrets somewhere other than the project root. Only the
+project's own `.env` is loaded at runtime, so use it for review rather than for
+a live deployment.
+
 ### Reference
 
 **`server`**
@@ -637,12 +675,16 @@ For routers that only accept a full URL, use the query-parameter form.
 ## CLI
 
 ```console
+$ ddns config:init [--config=PATH] [--env=PATH] [--force]
 $ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run] [--json]
 $ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once] [--json]
 $ ddns hosts:list [--json]
 $ ddns config:validate [<file>] [--json]
 $ ddns providers:list [--json]
 ```
+
+`config:init` is [the setup wizard](#the-wizard); everything else needs a
+configuration file to already exist.
 
 ```console
 $ ddns update --all
