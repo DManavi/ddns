@@ -603,6 +603,40 @@ Prefer cron? Use `update`, or `watch --once`.
   `/v1/hosts/{host}`, and in all log output. Error bodies carry no stack traces
   or provider credentials.
 
+### Dependencies
+
+Four things guard the dependency chain, in rough order of how much they matter:
+
+- **`composer.lock` is committed and authoritative.** It pins all 88 packages —
+  direct and transitive — to exact versions with dist hashes. Every install and
+  every CI run uses `composer install`, so what gets built is byte-for-byte what
+  was reviewed.
+- **Plugins are refused.** `allow-plugins: false` means no dependency can run
+  code during installation, which is the usual way a compromised package does
+  damage. No current dependency ships one; a future one would need a deliberate
+  change here to start.
+- **Direct dependencies are pinned to exact versions.** `composer update` cannot
+  move them without an edit to `composer.json`. Note that transitive packages
+  are only held by the lock file, not by these constraints.
+- **`composer audit --locked` runs in CI**, against what is actually installed.
+  This is the counterweight to pinning: fixed versions do not update themselves,
+  so something has to say when one becomes vulnerable. Abandoned packages are
+  reported too, since an unmaintained package is how ownership quietly changes
+  hands.
+
+Updating is therefore deliberate:
+
+```bash
+composer audit                       # what, if anything, needs attention
+composer require vendor/pkg:1.2.4    # edit the pin and the lock together
+composer check                       # audit, formatting, static analysis, tests
+```
+
+`composer validate` runs in CI but **not** `--strict`, which rejects exact
+constraints on principle. Plain `validate` still fails when `composer.json` and
+`composer.lock` disagree, which is the check worth having: it stops a dependency
+being changed without the lock being regenerated.
+
 ## Development
 
 ```bash
