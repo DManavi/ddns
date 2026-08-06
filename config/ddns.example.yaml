@@ -1,0 +1,100 @@
+# ddns configuration
+#
+# Copy to ddns.yaml in the project root (or point $DDNS_CONFIG at it) and edit.
+# Validate with: ddns config:validate
+#
+# Secrets are written as ${ENV_VAR} placeholders so this file can be committed
+# safely. Values come from the environment or a .env file at runtime.
+# ${VAR:-fallback} supplies a default when the variable is unset.
+
+server:
+  # Applied to any host that does not set its own ttl.
+  default_ttl: 300
+
+  # CIDR ranges whose X-Forwarded-For / X-Real-IP headers are believed.
+  #
+  # Leave empty unless this server really is behind a reverse proxy. With no
+  # entries the socket peer address is used and forwarding headers are ignored
+  # entirely, because an attacker who can forge X-Forwarded-For can point
+  # someone else's record wherever they like.
+  trusted_proxies: []
+  # trusted_proxies:
+  #   - 10.0.0.0/8
+  #   - 172.16.0.0/12
+  #   - 2001:db8::/32
+
+  # Refuse to publish RFC1918 / loopback / link-local addresses. Almost always a
+  # misconfigured proxy rather than an intentional choice, so this stays false
+  # unless you are running a split-horizon setup on purpose.
+  allow_private_ips: false
+
+  # Seconds to wait on an echo service before trying the next one.
+  ip_lookup_timeout: 5
+
+  # Endpoints used by the CLI to discover this machine's public address. Tried
+  # in order; the first usable answer wins. Defaults are shown - override only
+  # if you would rather run your own.
+  ip_services:
+    v4:
+      - https://api.ipify.org
+      - https://ipv4.icanhazip.com
+      - https://v4.ident.me
+    v6:
+      - https://api6.ipify.org
+      - https://ipv6.icanhazip.com
+      - https://v6.ident.me
+
+# Provider accounts. The key is a name you choose; `driver` selects the
+# implementation. Run `ddns providers:list` to see every available driver.
+#
+# The same driver may appear more than once under different names, for example a
+# personal and a work account.
+providers:
+  do-personal:
+    driver: digitalocean
+    token: ${DO_TOKEN}
+
+  # vultr-main:
+  #   driver: vultr
+  #   token: ${VULTR_TOKEN}
+
+  # cf-main:
+  #   driver: cloudflare
+  #   token: ${CF_TOKEN}
+  #   # Optional. A token scoped to one zone cannot list zones, so give the ID
+  #   # explicitly to skip the name-to-ID lookup.
+  #   zone_id: ${CF_ZONE_ID}
+
+# The hostnames kept in sync.
+#
+# The key is used both as the URL segment (/v1/hosts/<key>/update) and as the
+# CLI argument (ddns update <key>), so keep it URL safe.
+hosts:
+  home:
+    provider: do-personal
+    zone: example.com
+
+    # Name relative to the zone. Use '@' for the zone apex.
+    name: home
+
+    # Address families to keep in sync. A host on an IPv4-only link that lists
+    # AAAA will simply report that record as skipped rather than failing.
+    types:
+      - A
+      # - AAAA
+
+    ttl: 60
+
+    # The secret an HTTP client presents to update this host. Minimum 12
+    # characters; give each host its own.
+    #
+    #   openssl rand -hex 24
+    token: ${HOME_TOKEN}
+
+  # apex:
+  #   provider: do-personal
+  #   zone: example.com
+  #   name: '@'
+  #   types: [A, AAAA]
+  #   ttl: 300
+  #   token: ${APEX_TOKEN}
