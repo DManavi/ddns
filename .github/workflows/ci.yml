@@ -67,6 +67,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The default `docker` driver cannot export a build cache, so the GitHub
+      # Actions cache below needs the container driver buildx sets up here.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
       # `dev` is the last stage in the Dockerfile, so the target has to be
       # named explicitly or this would build the development image.
       - name: Build the production image
