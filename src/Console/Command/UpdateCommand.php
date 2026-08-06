@@ -26,6 +26,8 @@ final class UpdateCommand extends AbstractDdnsCommand
 {
     protected function configure(): void
     {
+        $this->addJsonOption('Emit a JSON report instead of a table.');
+
         $this
             ->addArgument('host', InputArgument::IS_ARRAY, 'Host names to update; omit to update all.')
             ->addOption('all', 'a', InputOption::VALUE_NONE, 'Update every configured host.')
@@ -51,7 +53,8 @@ final class UpdateCommand extends AbstractDdnsCommand
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
+        $io = $this->style($input, $output);
+        $json = $this->wantsJson($input);
 
         $hosts = $this->selectHosts($input, $io);
 
@@ -60,7 +63,12 @@ final class UpdateCommand extends AbstractDdnsCommand
         }
 
         if ($hosts === []) {
-            $io->warning('No hosts are configured.');
+            if ($json) {
+                // Still a valid, parseable result: nothing to do is not an error.
+                $this->json($output)->document(['hosts' => [], 'changed' => false, 'failed' => false]);
+            } else {
+                $io->warning('No hosts are configured.');
+            }
 
             return self::SUCCESS;
         }
@@ -81,7 +89,11 @@ final class UpdateCommand extends AbstractDdnsCommand
 
         $reports = $this->service(DdnsUpdater::class)->updateMany($hosts, $resolver, $dryRun);
 
-        $this->render($io, $reports);
+        if ($json) {
+            $this->renderJson($output, $reports, $dryRun);
+        } else {
+            $this->render($io, $reports);
+        }
 
         foreach ($reports as $report) {
             if (!$report->isSuccessful()) {
@@ -101,6 +113,32 @@ final class UpdateCommand extends AbstractDdnsCommand
         }
 
         return new ChainIpResolver($this->service(HttpIpResolver::class));
+    }
+
+    /**
+     * The same report shape the HTTP API returns, so a script consuming one
+     * front-end can consume the other without a second parser.
+     *
+     * @param list<UpdateReport> $reports
+     */
+    private function renderJson(OutputInterface $output, array $reports, bool $dryRun): void
+    {
+        $failed = false;
+        $changed = false;
+
+        foreach ($reports as $report) {
+            $failed = $failed || !$report->isSuccessful();
+            $changed = $changed || $report->hasChanges();
+        }
+
+        $this->json($output)->document([
+            // Two summary flags so a caller can branch without walking the
+            // list; the exit code carries the same verdict as `failed`.
+            'changed' => $changed,
+            'failed' => $failed,
+            'dry_run' => $dryRun,
+            'hosts' => array_map(static fn (UpdateReport $r): array => $r->toArray(), $reports),
+        ]);
     }
 
     /**

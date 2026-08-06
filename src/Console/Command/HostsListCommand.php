@@ -8,9 +8,7 @@ use Ddns\Config\HostConfig;
 use Ddns\Console\AbstractDdnsCommand;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use Symfony\Component\Console\Style\SymfonyStyle;
 
 #[AsCommand(
     name: 'hosts:list',
@@ -20,16 +18,23 @@ final class HostsListCommand extends AbstractDdnsCommand
 {
     protected function configure(): void
     {
-        $this->addOption('json', null, InputOption::VALUE_NONE, 'Emit JSON instead of a table.');
+        $this->addJsonOption('Emit JSON instead of a table.');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $io = new SymfonyStyle($input, $output);
+        $io = $this->style($input, $output);
+        $json = $this->wantsJson($input);
         $hosts = $this->configuration()->hosts();
 
         if ($hosts === []) {
-            $io->warning('No hosts are configured.');
+            // An empty list is still a valid answer, so JSON callers get one
+            // rather than a warning that would corrupt the document.
+            if ($json) {
+                $this->json($output)->document(['hosts' => []]);
+            } else {
+                $io->warning('No hosts are configured.');
+            }
 
             return self::SUCCESS;
         }
@@ -39,8 +44,8 @@ final class HostsListCommand extends AbstractDdnsCommand
             array_values($hosts),
         );
 
-        if ($input->getOption('json') === true) {
-            $output->writeln(json_encode($rows, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        if ($json) {
+            $this->json($output)->document(['hosts' => $rows]);
 
             return self::SUCCESS;
         }
