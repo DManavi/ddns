@@ -36,5 +36,14 @@ interface ProviderFactory
 
     public function unavailableReason(): ?string;
 
+    /**
+     * Whether this driver needs a `token` in its configuration.
+     *
+     * False for drivers backed by a cloud credential chain, where the
+     * credentials may be supplied entirely at runtime by an instance profile,
+     * a task role or the environment.
+     */
+    public function requiresToken(): bool;
+
     public function create(ProviderConfig $config): DnsProvider;
 }

@@ -31,6 +31,11 @@ abstract class BearerTokenProviderFactory implements ProviderFactory
         return null;
     }
 
+    public function requiresToken(): bool
+    {
+        return true;
+    }
+
     protected function restClient(string $baseUri, string $token): RestClient
     {
         return new RestClient(

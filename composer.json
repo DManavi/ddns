@@ -8,6 +8,7 @@
         "php": "^8.2",
         "ext-json": "*",
         "ext-mbstring": "*",
+        "aws/aws-sdk-php": "^3.390",
         "guzzlehttp/guzzle": "^7.9",
         "monolog/monolog": "^3.7",
         "php-di/php-di": "^7.0",

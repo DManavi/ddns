@@ -38,12 +38,9 @@ final class ConfigLoader
 
     private ConfigProblems $problems;
 
-    /**
-     * @param list<string> $knownDrivers driver identifiers the registry can build
-     */
     public function __construct(
         private readonly EnvInterpolator $interpolator,
-        private readonly array $knownDrivers,
+        private readonly DriverCatalog $drivers,
     ) {
         $this->problems = new ConfigProblems();
     }
@@ -203,12 +200,12 @@ final class ConfigLoader
                 continue;
             }
 
-            if (!in_array($driver, $this->knownDrivers, true)) {
+            if (!$this->drivers->has($driver)) {
                 $this->problems->addf(
                     '"%s.driver" is "%s", which is not a known driver. Available drivers: %s.',
                     $path,
                     $driver,
-                    implode(', ', $this->knownDrivers),
+                    implode(', ', $this->drivers->names()),
                 );
 
                 continue;
@@ -216,7 +213,10 @@ final class ConfigLoader
 
             $token = $this->stringValue($definition['token'] ?? null, $path . '.token');
 
-            if ($token === '') {
+            // Route53 and anything else using a cloud credential chain may
+            // legitimately carry no token at all: the credentials come from an
+            // instance profile, a task role or the environment.
+            if ($token === '' && $this->drivers->requiresToken($driver)) {
                 $this->problems->addf(
                     '"%s.token" is required and must not be empty. If it comes from the environment, '
                     . 'check that the variable is exported.',
