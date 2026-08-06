@@ -22,6 +22,11 @@ FROM php:8.3-cli-alpine AS runtime
 
 # `pcntl` is what gives `ddns watch` a graceful shutdown when the container is
 # stopped; without it SIGTERM kills the process mid-update.
+#
+# Alpine drops superseded package versions from its repositories quickly, so
+# pinning them makes builds fail over time rather than making them reproducible.
+# The base image tag is the pin that matters.
+# hadolint ignore=DL3018
 RUN docker-php-ext-install pcntl \
     && apk add --no-cache curl \
     && rm -rf /var/cache/apk/*
@@ -50,7 +55,9 @@ COPY --chown=ddns:ddns composer.json ./
 
 RUN chmod +x bin/ddns
 
-USER ddns
+# Numeric rather than `ddns`, so an orchestrator can verify this is not root
+# without having to resolve a name from the image's passwd file.
+USER 1000:1000
 
 # Mount the real configuration here, or set DDNS_CONFIG to another path.
 ENV DDNS_CONFIG=/config/ddns.yaml
@@ -58,6 +65,9 @@ VOLUME ["/config"]
 
 EXPOSE 8080
 
+# Shell form is required here: the `||` is what turns a curl failure into the
+# unhealthy exit code Docker expects.
+# hadolint ignore=DL3025
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/health || exit 1
 
@@ -65,3 +75,42 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 #   docker run --rm -v ./ddns.yaml:/config/ddns.yaml ddns bin/ddns update --all
 #   docker run -d   -v ./ddns.yaml:/config/ddns.yaml ddns bin/ddns watch --all
 CMD ["php", "-S", "0.0.0.0:8080", "-t", "public", "public/index.php"]
+
+# ----------------------------------------------------------------- development
+# Built by compose.dev.yaml. Adds the dev dependencies and the toolchain, and
+# expects the source to be bind-mounted over the copies baked in above.
+FROM runtime AS dev
+
+# root, numerically, to install packages before dropping back to 1000.
+USER 0:0
+
+# hadolint ignore=DL3018
+RUN apk add --no-cache git unzip
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# The production image caches opcode with timestamp validation switched off,
+# which would make bind-mounted edits invisible until a restart.
+RUN { \
+        echo 'opcache.validate_timestamps=1'; \
+        echo 'opcache.revalidate_freq=0'; \
+        echo 'memory_limit=512M'; \
+    } > "$PHP_INI_DIR/conf.d/zz-dev.ini"
+
+COPY composer.json composer.lock* ./
+
+# Composer warns loudly when run as root; it has to be here, because the source
+# is bind-mounted over /app at runtime and vendor/ must already exist.
+ENV COMPOSER_ALLOW_SUPERUSER=1
+
+RUN composer install --no-interaction --prefer-dist && composer clear-cache
+
+COPY tests ./tests
+COPY phpunit.xml.dist phpstan.neon.dist .php-cs-fixer.dist.php ./
+
+# The toolchain writes caches into the project root, so it has to be writable.
+RUN chown -R ddns:ddns /app
+
+USER 1000:1000
+
+ENV COMPOSER_CACHE_DIR=/tmp/composer

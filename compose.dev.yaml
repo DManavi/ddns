@@ -1,0 +1,84 @@
+# Development.
+#
+#   docker compose -f compose.dev.yaml up
+#
+# That is the whole setup: ddns.dev.yaml is committed with placeholder
+# credentials, enough to boot and answer /health. Put real tokens in .env when
+# you want an update to actually reach a provider.
+#
+# Source directories are bind-mounted, so editing a file under src/ takes
+# effect on the next request - no rebuild. Rebuild only when composer.json or
+# the Dockerfile changes:
+#
+#   docker compose -f compose.dev.yaml build
+#
+# Run the toolchain in the same image the app runs in:
+#
+#   docker compose -f compose.dev.yaml run --rm tools composer check
+#   docker compose -f compose.dev.yaml run --rm tools composer test
+#   docker compose -f compose.dev.yaml run --rm cli hosts:list
+#
+# A separate project name from compose.yaml, so a dev stack can never collide
+# with a production one on the same host.
+
+name: ddns-dev
+
+x-dev: &dev
+  build:
+    context: .
+    target: dev
+  image: ddns:dev
+  environment:
+    DDNS_CONFIG: /config/ddns.yaml
+    DDNS_LOG_LEVEL: ${DDNS_LOG_LEVEL:-DEBUG}
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    # Only the source is mounted. vendor/ stays as the image built it, so a
+    # host-side install cannot shadow it with the wrong platform's binaries.
+    - ./src:/app/src
+    - ./tests:/app/tests
+    - ./config:/app/config
+    - ./public:/app/public
+    - ./bin:/app/bin
+    - type: bind
+      source: ./ddns.dev.yaml
+      target: /config/ddns.yaml
+      read_only: true
+      bind:
+        create_host_path: false
+
+services:
+  server:
+    <<: *dev
+    ports:
+      - "${DDNS_DEV_PORT:-8080}:8080"
+    # No restart policy: a crash should stay visible rather than loop.
+
+  watcher:
+    <<: *dev
+    profiles: ["watcher"]
+    # A short interval and verbose output, to actually see the loop working.
+    command: ["bin/ddns", "watch", "--all", "--interval", "30", "-v"]
+    healthcheck:
+      disable: true
+
+  # `run --rm tools <command>` - PHPUnit, PHPStan, PHP-CS-Fixer, Composer.
+  tools:
+    <<: *dev
+    profiles: ["tools"]
+    command: ["composer", "check"]
+    environment:
+      DDNS_CONFIG: /config/ddns.yaml
+      DDNS_LOG_LEVEL: ERROR
+      # The image runs a newer PHP than the composer.json floor, which
+      # PHP-CS-Fixer warns about and would otherwise fail CI-style runs.
+      PHP_CS_FIXER_IGNORE_ENV: "1"
+
+  # `run --rm cli update --all --dry-run`
+  cli:
+    <<: *dev
+    profiles: ["tools"]
+    entrypoint: ["bin/ddns"]
+    command: ["list"]

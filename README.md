@@ -60,14 +60,52 @@ Adding one is a single class plus a factory — see [Adding a provider](#adding-
 
 ### Docker
 
+Two stacks, one image:
+
+| File | Purpose |
+| --- | --- |
+| `compose.yaml` | Production — hardened, restart policies, no source mounts |
+| `compose.dev.yaml` | Development — source bind-mounted, dev dependencies, toolchain |
+
+**Production:**
+
 ```bash
 cp config/ddns.example.yaml ddns.yaml   # edit: zone, record name, provider
 cp .env.example .env                    # edit: API token, host token
 
-docker compose up server                # HTTP endpoint on :8080
-# or
-docker compose up watcher               # polling loop, no ports exposed
+docker compose up -d                    # HTTP endpoint
+docker compose --profile watcher up -d  # or poll from inside your network
 ```
+
+The server binds to `127.0.0.1:8080` by default, on the assumption that a
+reverse proxy terminates TLS in front of it. Set `DDNS_HTTP_BIND=0.0.0.0:8080`
+to expose it directly. The container runs as uid 1000 with a read-only root
+filesystem and all capabilities dropped.
+
+**Development:**
+
+```bash
+docker compose -f compose.dev.yaml up
+```
+
+That works with no setup at all — `ddns.dev.yaml` is committed with placeholder
+credentials, enough to boot and answer `/health`. `src/`, `tests/`, `config/`,
+`public/` and `bin/` are bind-mounted, so edits take effect on the next request.
+Rebuild only when `composer.json` or the `Dockerfile` changes.
+
+Run the toolchain in the same image the application runs in:
+
+```bash
+docker compose -f compose.dev.yaml run --rm tools composer check
+docker compose -f compose.dev.yaml run --rm tools composer test
+docker compose -f compose.dev.yaml run --rm cli hosts:list
+```
+
+The two stacks use different Compose project names (`ddns` and `ddns-dev`), so
+a dev stack can never collide with a production one on the same host.
+
+> `dev` is the last stage in the `Dockerfile`, so a plain `docker build .`
+> produces the development image. Pass `--target runtime` for production.
 
 ### Bare metal
 
@@ -301,11 +339,19 @@ composer fmt           # PHP-CS-Fixer
 composer check         # all three
 ```
 
+Or without installing PHP at all:
+
+```bash
+docker compose -f compose.dev.yaml run --rm tools composer check
+```
+
 ### Layout
 
 ```
 bin/ddns            CLI entrypoint
 public/index.php    HTTP entrypoint
+compose.yaml        production stack
+compose.dev.yaml    development stack
 config/             container definitions, routes, example config
 src/
   Domain/           framework-free core: records, provider contract, DdnsUpdater

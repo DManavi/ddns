@@ -1,0 +1,40 @@
+# Keep the build context small and free of secrets.
+#
+# Without this file the whole working tree - including .env, .git and a
+# host-installed vendor/ - is uploaded to the daemon on every build.
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+ddns.yaml
+ddns.yml
+ddns.dev.yaml
+config/ddns.yaml
+config/ddns.yml
+
+# Installed by the build itself; a host copy would be the wrong platform
+vendor/
+
+# History and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Tooling caches and artefacts
+.phpunit.cache/
+.phpunit.result.cache
+.php-cs-fixer.cache
+.idea/
+.vscode/
+
+# Docker's own files
+Dockerfile
+.dockerignore
+compose.yaml
+compose.dev.yaml
+
+# Docs
+README.md
+LICENSE

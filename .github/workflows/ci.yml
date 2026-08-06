@@ -61,21 +61,62 @@ jobs:
           php bin/ddns config:validate /tmp/ddns.yaml
 
   docker:
-    name: Docker image
+    name: Docker images
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build the image
+      # `dev` is the last stage in the Dockerfile, so the target has to be
+      # named explicitly or this would build the development image.
+      - name: Build the production image
         uses: docker/build-push-action@v6
         with:
           context: .
+          target: runtime
           push: false
           load: true
           tags: ddns:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Smoke test the CLI inside the image
+      - name: Smoke test the CLI inside the production image
         run: docker run --rm ddns:ci bin/ddns providers:list
+
+      - name: Confirm the production image runs as a non-root user
+        run: test "$(docker run --rm ddns:ci id -u)" = "1000"
+
+      - name: Build the development image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: dev
+          push: false
+          load: true
+          tags: ddns:ci-dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Proves the dev image is actually usable: vendor, dev dependencies and
+      # source all line up inside it.
+      - name: Run the test suite inside the development image
+        run: docker run --rm ddns:ci-dev vendor/bin/phpunit
+
+  compose:
+    name: Compose files
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both stacks must parse, and production must not accidentally start the
+      # watcher alongside the server.
+      - name: Validate the production stack
+        run: |
+          docker compose -f compose.yaml config --quiet
+          test "$(docker compose -f compose.yaml config --services)" = "server"
+
+      - name: Validate the development stack
+        run: |
+          docker compose -f compose.dev.yaml config --quiet
+          test "$(docker compose -f compose.dev.yaml config --services)" = "server"
