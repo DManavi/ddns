@@ -706,8 +706,19 @@ which is used when several are valid:
 The query string comes first because it is the only transport a caller has to
 add deliberately.
 
-Comparison is constant-time, and an unknown host is indistinguishable from a
-wrong token, so the API cannot be used to enumerate configured host names.
+Surrounding whitespace is ignored, so a token pasted with a stray space behaves
+the same in every transport.
+
+**A token belongs to one host.** The commonest cause of a `401` is not the
+token at all — it is a host name in the URL that is not the one the token
+belongs to, or is not configured. Comparison is constant-time and an unknown
+host is answered identically to a wrong token, so the API cannot be used to
+enumerate configured host names; the response therefore cannot tell you which
+of the two was wrong. The server log can:
+
+```
+Rejected an unauthenticated request. {"host":"myhost","reason":"no such host is configured", ...}
+```
 
 A rejected request answers `401` with `WWW-Authenticate: Basic`, which is what
 makes a router's "enter a URL, a username and a password" screen work. It is
