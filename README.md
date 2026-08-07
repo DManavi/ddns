@@ -1242,12 +1242,15 @@ For the CLI, `DDNS_CONFIG=ddns.dev.yaml ./bin/ddns hosts:list`.
 ### VS Code
 
 `.vscode/launch.json` is committed, so **Run and Debug** is populated the
-moment the repository is opened. Nothing needs configuring first: every profile
-points `DDNS_CONFIG` at `ddns.dev.yaml`.
+moment the repository is opened. The profiles use the same configuration the
+application would find on its own — `config/ddns.yaml`, as written by
+`config:init` — so what you debug is what you configured. Only the *sample*
+profile pins a file, and its name says so.
 
 | Profile | What it does |
 | --- | --- |
 | **Serve (php -S)** | Starts the built-in server on `127.0.0.1:8080` and opens `/api` |
+| **Serve (php -S, sample config)** | The same, against the committed `ddns.dev.yaml` — for a clone with no configuration yet |
 | **Serve (php -S, random port)** | The same, on a port the system picks, for when 8080 is taken |
 | **CLI: …** | `hosts:list`, `config:validate`, `update --all --dry-run`, `watch --all`, the `config:init` wizard |
 | **PHPUnit: …** | The whole suite, the file you have open, or a `--filter` you are prompted for |
@@ -1267,6 +1270,16 @@ to point back at the host:
 xdebug.mode = debug
 xdebug.client_host = host.docker.internal
 ```
+
+Every profile sets `DDNS_LOG_LEVEL=DEBUG`, and the application logs which
+configuration file it loaded as it starts:
+
+```
+ddns.DEBUG: Loaded configuration. {"path":"/…/config/ddns.yaml","hosts":1}
+```
+
+That is the first line to check whenever a token works in one place and not
+another — it usually means two things are reading two different files.
 
 Personal settings stay out of the repository: `.vscode/` is gitignored apart
 from `launch.json` and `extensions.json`.
