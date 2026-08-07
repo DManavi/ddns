@@ -11,16 +11,20 @@ use Monolog\Level;
  *
  * An unrecognised value falls back to INFO rather than throwing: a typo in
  * `DDNS_LOG_LEVEL` should not stop the server from starting.
+ *
+ * The value is passed in rather than read here, so that the caller decides
+ * where the environment comes from. That matters more than it sounds: this
+ * used to call getenv(), which does not see anything set in .env, so the
+ * variable worked from Docker and the shell but not from the one file that
+ * documents it.
  */
 final class LogLevel
 {
-    private const VARIABLE = 'DDNS_LOG_LEVEL';
+    public const VARIABLE = 'DDNS_LOG_LEVEL';
 
-    public static function fromEnvironment(): Level
+    public static function fromEnvironment(?string $configured): Level
     {
-        $configured = getenv(self::VARIABLE);
-
-        if (!is_string($configured) || trim($configured) === '') {
+        if ($configured === null || trim($configured) === '') {
             return Level::Info;
         }
 

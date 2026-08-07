@@ -45,7 +45,10 @@ return [
     // ---------------------------------------------------------------- logging
     LoggerInterface::class => static function (): LoggerInterface {
         $logger = new Logger('ddns');
-        $logger->pushHandler(new StreamHandler('php://stderr', LogLevel::fromEnvironment()));
+        $logger->pushHandler(new StreamHandler(
+            'php://stderr',
+            LogLevel::fromEnvironment(Environment::fromGlobals()->get(LogLevel::VARIABLE)),
+        ));
 
         return $logger;
     },
