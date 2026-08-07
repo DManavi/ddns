@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns\Tests\Integration;
 
+use Ddns\Bootstrap;
 use Ddns\Config\ConfigField;
 use Ddns\Config\ConfigFile;
 use Ddns\Config\ConfigLoader;
@@ -132,6 +133,46 @@ final class ConfigInitCommandTest extends ConsoleTestCase
         $configuration = $this->load($workspace);
         self::assertSame(self::PROVIDER_TOKEN, $configuration->provider('home')->token());
         self::assertSame($this->envValue($workspace, 'HOME_TOKEN_2'), $configuration->host('home')->token());
+    }
+
+    /**
+     * The wizard has to write where the application reads, or it reports
+     * success and nothing changes. `config/` is first in the search order and
+     * is the path the container expects mounted, so both agree.
+     */
+    #[Test]
+    public function the_default_target_is_the_first_place_the_application_looks(): void
+    {
+        self::assertSame('config/ddns.yaml', Bootstrap::DEFAULT_CONFIG_PATH);
+        self::assertSame(
+            Bootstrap::projectRoot() . '/' . Bootstrap::DEFAULT_CONFIG_PATH,
+            Bootstrap::configCandidates()[0] ?? null,
+        );
+    }
+
+    #[Test]
+    public function it_warns_when_the_file_it_wrote_would_be_ignored(): void
+    {
+        // Writing somewhere the server reads second is the most confusing
+        // outcome available: everything reports success and nothing changes.
+        $workspace = $this->tempDirectory();
+
+        $result = $this->wizard($workspace, [
+            'digitalocean', 'do-personal', self::PROVIDER_TOKEN,
+            'example.com', 'home', 'home', 'A', '60',
+        ]);
+
+        self::assertSame(0, $result->exitCode, $result->stdout . $result->stderr);
+
+        // The workspace is not on the search path at all, so the file it wrote
+        // is shadowed by whatever the project itself has.
+        $shadowed = str_contains(self::unwrap($result->stdout), 'read in preference to what was just written');
+
+        self::assertSame(
+            $shadowed,
+            array_filter(Bootstrap::configCandidates(), 'is_file') !== [],
+            'The warning must appear exactly when another configuration would win.',
+        );
     }
 
     #[Test]
