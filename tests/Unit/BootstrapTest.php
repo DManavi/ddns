@@ -110,7 +110,17 @@ final class BootstrapTest extends TestCase
     #[Test]
     public function the_editor_profiles_do_not_pin_a_configuration_file(): void
     {
-        $path = Bootstrap::projectRoot() . '/.vscode/launch.json';
+        $directory = Bootstrap::projectRoot() . '/.vscode';
+
+        // The runtime image ships the application, not the editor config, so
+        // there is nothing to check when the suite runs from one. Keyed on the
+        // directory rather than the file: if .vscode is there but the profiles
+        // are not, that is a deletion worth failing on.
+        if (!is_dir($directory)) {
+            self::markTestSkipped('Not a source checkout, so there are no editor profiles to check.');
+        }
+
+        $path = $directory . '/launch.json';
 
         self::assertFileExists($path);
 
