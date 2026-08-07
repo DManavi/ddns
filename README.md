@@ -591,13 +591,16 @@ $ ddns config:validate
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
+| `GET` | `/v1/hosts/{host}` | yes | The host's own config, token redacted |
+| `GET` `POST` | `/v1/hosts/{host}/update` | yes | Update the record |
 | `GET` | `/` | none | Temporary redirect to `/api` |
 | `GET` | `/api` | none | [Browsable documentation](#openapi) |
 | `GET` | `/health` | none | Liveness probe |
 | `GET` | `/openapi.json` | none | [OpenAPI description](#openapi) |
 | `GET` | `/openapi.yaml` | none | The same, as YAML |
-| `GET` | `/v1/hosts/{host}` | yes | The host's own config, token redacted |
-| `GET` `POST` | `/v1/hosts/{host}/update` | yes | Update the record |
+
+The two `/v1` routes are the API; the rest deliver the documentation or report
+on the server, and are the ones left out of the OpenAPI description.
 
 ### OpenAPI
 
@@ -625,12 +628,19 @@ npx @openapitools/openapi-generator-cli generate \
     -i https://ddns.example.com/openapi.json -g python -o ./ddns-client
 ```
 
+It describes the `/v1` endpoints and nothing else. The rest of what this server
+answers — the root redirect, `/api` itself, the two spec formats and `/health` —
+is still served, and still documented [above](#endpoints); it is simply left out
+of the description, because the machinery that delivers a description is noise
+to whoever is reading it to write a client.
+
 The document is generated from the application rather than maintained beside
 it: record types and outcomes are read from the same enums the server uses, and
 the test suite checks the documented paths and methods against the routes Slim
 actually registers, in both directions, and the documented response shapes
 against real responses. A documented endpoint that stopped existing, or a field
-that was renamed, fails the build.
+that was renamed, fails the build. The exclusions are an explicit list, so
+adding one is a decision somebody makes rather than one that happens quietly.
 
 #### Where Swagger UI comes from
 

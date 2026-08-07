@@ -27,17 +27,27 @@ use Symfony\Component\Yaml\Yaml;
 final class OpenApiTest extends HttpTestCase
 {
     /**
-     * Routes that exist but are not API surface.
+     * Routes that are served but deliberately left out of the description.
      *
-     * The static assets behind the documentation page are served over HTTP but
-     * are not something a client would ever call deliberately, and listing
-     * them as an operation would put a stylesheet in the middle of the API
-     * description. Kept as an explicit list rather than a pattern, so adding
-     * to it is a decision somebody makes rather than one that happens.
+     * All of these exist to deliver the documentation, or to report on the
+     * server itself, rather than to manage DNS: the root redirect, the page
+     * at `/api`, the two formats of this document, the assets behind that
+     * page, and the health probe. Describing the machinery that serves the
+     * description is noise to whoever is reading it to write a client.
+     *
+     * An explicit list rather than a pattern, so adding to it is a decision
+     * somebody makes rather than one that happens quietly.
      *
      * @var list<string>
      */
-    private const NOT_API_SURFACE = ['get /vendor/swagger-ui/{file}'];
+    private const NOT_API_SURFACE = [
+        'get /',
+        'get /api',
+        'get /health',
+        'get /openapi.json',
+        'get /openapi.yaml',
+        'get /vendor/swagger-ui/{file}',
+    ];
 
     #[Test]
     public function it_is_served_as_json(): void
@@ -74,13 +84,14 @@ final class OpenApiTest extends HttpTestCase
     #[Test]
     public function the_yaml_form_writes_empty_arrays_as_arrays(): void
     {
-        // Regression: dumped naively, `security: []` becomes `{}`, and a
+        // Regression: dumped naively, an empty `[]` becomes `{}`, and a
         // document whose security requirements are objects rather than arrays
-        // is rejected outright by OpenAPI validators.
+        // is rejected outright by OpenAPI validators. The scheme entries under
+        // the root `security` are the empty arrays that exercise this.
         $body = $this->body($this->request('GET', '/openapi.yaml'));
 
-        self::assertStringContainsString('security: []', $body);
-        self::assertStringNotContainsString('security: {  }', $body);
+        self::assertStringContainsString('bearerAuth: []', $body);
+        self::assertStringNotContainsString('bearerAuth: {  }', $body);
     }
 
     #[Test]
@@ -162,17 +173,6 @@ final class OpenApiTest extends HttpTestCase
                 $operation,
             ));
         }
-    }
-
-    #[Test]
-    public function the_documented_health_response_matches_the_real_one(): void
-    {
-        $response = $this->request('GET', '/health');
-
-        self::assertSame(
-            $this->requiredProperties('Health'),
-            array_keys($this->json($response)),
-        );
     }
 
     #[Test]

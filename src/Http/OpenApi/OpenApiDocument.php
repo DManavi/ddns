@@ -40,7 +40,6 @@ final class OpenApiDocument
             'servers' => $this->servers(),
             'tags' => [
                 ['name' => 'Records', 'description' => 'Keeping a hostname pointed at the current address.'],
-                ['name' => 'Service', 'description' => 'Probes and machine-readable documentation.'],
             ],
             'paths' => $this->paths(),
             'components' => [
@@ -138,12 +137,12 @@ final class OpenApiDocument
      */
     private function paths(): array
     {
+        // Only the API itself. The routes that serve the documentation - the
+        // root redirect, /api, and the two spec formats - and the /health
+        // probe are all still served; they are simply not described here.
+        // A description of the machinery that serves the description is noise
+        // to anyone reading this to write a client.
         return [
-            '/' => ['get' => $this->root()],
-            '/api' => ['get' => $this->docs()],
-            '/health' => ['get' => $this->health()],
-            '/openapi.json' => ['get' => $this->openapi('json')],
-            '/openapi.yaml' => ['get' => $this->openapi('yaml')],
             '/v1/hosts/{host}' => [
                 'parameters' => [$this->hostParameter()],
                 'get' => $this->showHost(),
@@ -152,103 +151,6 @@ final class OpenApiDocument
                 'parameters' => [$this->hostParameter()],
                 'get' => $this->update('get'),
                 'post' => $this->update('post'),
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function root(): array
-    {
-        return [
-            'operationId' => 'root',
-            'tags' => ['Service'],
-            'summary' => 'Redirect to the documentation.',
-            'description' => 'Nothing is served at the root, and a browser arriving there is looking for the '
-                . 'documentation. Temporary rather than permanent, so the root stays free for something else later.',
-            'security' => [],
-            'responses' => [
-                '302' => [
-                    'description' => 'Redirect to `/api`.',
-                    'headers' => [
-                        'Location' => [
-                            'description' => 'The documentation, as a path relative to this server.',
-                            'schema' => ['type' => 'string', 'example' => '/api'],
-                        ],
-                    ],
-                ],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function docs(): array
-    {
-        return [
-            'operationId' => 'docs',
-            'tags' => ['Service'],
-            'summary' => 'This description, rendered with Swagger UI.',
-            'description' => 'A browsable version of the OpenAPI document, from which the API can also be called. '
-                . 'The page holds no documentation of its own - it reads `/openapi.json`.',
-            'security' => [],
-            'responses' => [
-                '200' => [
-                    'description' => 'The documentation page.',
-                    'content' => ['text/html' => ['schema' => ['type' => 'string']]],
-                ],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function health(): array
-    {
-        return [
-            'operationId' => 'health',
-            'tags' => ['Service'],
-            'summary' => 'Liveness probe.',
-            'description' => 'Reports that the configuration loaded and how much of it there is. '
-                . 'Counts only - never host names, which would be disclosure on an unauthenticated endpoint.',
-            // Probes run before any credential exists.
-            'security' => [],
-            'responses' => [
-                '200' => [
-                    'description' => 'The server is up and its configuration is valid.',
-                    'content' => ['application/json' => [
-                        'schema' => ['$ref' => '#/components/schemas/Health'],
-                    ]],
-                ],
-                '500' => ['$ref' => '#/components/responses/ConfigurationError'],
-            ],
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function openapi(string $format): array
-    {
-        $isJson = $format === 'json';
-
-        return [
-            'operationId' => 'openapi' . ucfirst($format),
-            'tags' => ['Service'],
-            'summary' => sprintf('This document, as %s.', strtoupper($format)),
-            'security' => [],
-            'responses' => [
-                '200' => [
-                    'description' => 'The OpenAPI description of this server.',
-                    'content' => [
-                        $isJson ? 'application/json' : 'application/yaml' => [
-                            'schema' => ['type' => 'object', 'additionalProperties' => true],
-                        ],
-                    ],
-                ],
             ],
         ];
     }
@@ -485,15 +387,6 @@ final class OpenApiDocument
     private function schemas(): array
     {
         return [
-            'Health' => [
-                'type' => 'object',
-                'required' => ['status', 'hosts_configured', 'providers_configured'],
-                'properties' => [
-                    'status' => ['type' => 'string', 'enum' => ['ok']],
-                    'hosts_configured' => ['type' => 'integer', 'minimum' => 0],
-                    'providers_configured' => ['type' => 'integer', 'minimum' => 0],
-                ],
-            ],
             'HostView' => [
                 'type' => 'object',
                 'required' => ['host', 'client_ip'],
