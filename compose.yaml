@@ -1,6 +1,7 @@
 # Production.
 #
-#   cp config/ddns.example.yaml ddns.yaml   # edit it
+#   ddns config:init                        # or copy the example below
+#   cp config/ddns.example.yaml config/ddns.yaml
 #   cp .env.example .env                    # put the real secrets here
 #   docker compose up -d
 #
@@ -32,11 +33,14 @@ x-common: &common
     - path: .env
       required: false
   volumes:
-    # Long syntax with create_host_path disabled: if ddns.yaml is missing,
+    # Long syntax with create_host_path disabled: if the file is missing,
     # Docker would otherwise silently create a *directory* with that name and
     # the container would fail with a confusing parse error.
+    #
+    # The same path inside and out, so `config/ddns.yaml` means one thing
+    # whether you are looking at the host or at the container.
     - type: bind
-      source: ./ddns.yaml
+      source: ./config/ddns.yaml
       target: /config/ddns.yaml
       read_only: true
       bind:
@@ -60,7 +64,7 @@ services:
     <<: *common
     ports:
       # Bound to localhost by default: put a reverse proxy in front for TLS,
-      # and set server.trusted_proxies in ddns.yaml when you do. Override with
+      # and set server.trusted_proxies in config/ddns.yaml when you do. Override with
       # DDNS_HTTP_BIND=0.0.0.0:8080 to expose it directly.
       - "${DDNS_HTTP_BIND:-127.0.0.1:8080}:8080"
     deploy:

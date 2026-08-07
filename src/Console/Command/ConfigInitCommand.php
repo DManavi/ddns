@@ -202,13 +202,15 @@ final class ConfigInitCommand extends AbstractDdnsCommand
             return $explicit;
         }
 
-        $fromEnv = getenv('DDNS_CONFIG');
+        // The same lookup the application uses, so the wizard cannot write
+        // somewhere the server will not read.
+        $fromEnv = Bootstrap::configPathFromEnvironment();
 
-        if (is_string($fromEnv) && $fromEnv !== '') {
+        if ($fromEnv !== null) {
             return $fromEnv;
         }
 
-        return Bootstrap::projectRoot() . '/ddns.yaml';
+        return Bootstrap::projectRoot() . '/' . Bootstrap::DEFAULT_CONFIG_PATH;
     }
 
     private function chooseDriver(SymfonyStyle $io): ?ProviderFactory
@@ -497,6 +499,8 @@ final class ConfigInitCommand extends AbstractDdnsCommand
 
         $io->success(sprintf('Wrote %s', $path));
 
+        $this->warnAboutShadowing($io, $path);
+
         foreach ([
             'written' => 'Secrets written to %s: %s',
             'replaced' => 'Secrets replaced in %s: %s',
@@ -539,6 +543,37 @@ final class ConfigInitCommand extends AbstractDdnsCommand
             if (!in_array($candidate, $taken, true)) {
                 return $candidate;
             }
+        }
+    }
+
+    /**
+     * Point out any other configuration file the server would read first.
+     *
+     * Writing a file the application then ignores is the most confusing
+     * outcome available here: everything reports success and nothing changes.
+     *
+     * @throws void
+     */
+    private function warnAboutShadowing(SymfonyStyle $io, string $written): void
+    {
+        $written = realpath($written) ?: $written;
+
+        foreach (Bootstrap::configCandidates() as $candidate) {
+            if (!is_file($candidate)) {
+                continue;
+            }
+
+            if ((realpath($candidate) ?: $candidate) === $written) {
+                return;
+            }
+
+            $io->warning(sprintf(
+                "%s already exists and is read in preference to what was just written.\n"
+                . 'Delete it, or set DDNS_CONFIG to choose explicitly.',
+                $candidate,
+            ));
+
+            return;
         }
     }
 

@@ -96,8 +96,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8080/health || exit 1
 
 # Serves HTTP by default. Override the command for CLI use, for example:
-#   docker run --rm -v ./ddns.yaml:/config/ddns.yaml ddns bin/ddns update --all
-#   docker run -d   -v ./ddns.yaml:/config/ddns.yaml ddns bin/ddns watch --all
+#   docker run --rm -v ./config/ddns.yaml:/config/ddns.yaml ddns bin/ddns update --all
+#   docker run -d   -v ./config/ddns.yaml:/config/ddns.yaml ddns bin/ddns watch --all
 CMD ["php", "-S", "0.0.0.0:8080", "-t", "public", "public/index.php"]
 
 # ----------------------------------------------------------------- development

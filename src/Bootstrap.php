@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Ddns;
 
+use Ddns\Config\Environment;
 use Ddns\Config\Exception\ConfigurationError;
 use DI\Container;
 use DI\ContainerBuilder;
@@ -24,13 +25,28 @@ final class Bootstrap
      */
     public const VERSION = '1.0.0';
 
-    /** @var list<string> relative to the project root, in order of preference */
+    /**
+     * Where the configuration is looked for, relative to the project root, in
+     * order of preference.
+     *
+     * `config/` comes first because that is where `config:init` writes and
+     * where the container expects it mounted, so the same path means the same
+     * thing on the host and in the image. The project root is still searched,
+     * because that is where earlier versions put it.
+     *
+     * @var list<string>
+     */
     private const CONFIG_CANDIDATES = [
-        'ddns.yaml',
-        'ddns.yml',
         'config/ddns.yaml',
         'config/ddns.yml',
+        'ddns.yaml',
+        'ddns.yml',
     ];
+
+    /** Where `config:init` writes when it is not told otherwise. */
+    public const DEFAULT_CONFIG_PATH = 'config/ddns.yaml';
+
+    private static bool $dotEnvLoaded = false;
 
     public static function projectRoot(): string
     {
@@ -70,9 +86,9 @@ final class Bootstrap
      */
     public static function discoverConfigPath(): string
     {
-        $explicit = getenv('DDNS_CONFIG');
+        $explicit = self::configPathFromEnvironment();
 
-        if (is_string($explicit) && $explicit !== '') {
+        if ($explicit !== null) {
             return $explicit;
         }
 
@@ -86,13 +102,49 @@ final class Bootstrap
             }
         }
 
-        throw ConfigurationError::notFound(
-            array_map(static fn (string $c): string => $root . '/' . $c, self::CONFIG_CANDIDATES),
-        );
+        throw ConfigurationError::notFound(self::configCandidates());
+    }
+
+    /**
+     * `DDNS_CONFIG`, wherever it was set.
+     *
+     * Reads the superglobals as well as `getenv()`, because phpdotenv v5 loads
+     * `.env` into `$_ENV` and `$_SERVER` without calling `putenv()`. Consulting
+     * only `getenv()` meant a `DDNS_CONFIG` written in `.env` was silently
+     * ignored while every other variable in that file worked, since the config
+     * loader reads the superglobals for its `${VAR}` placeholders.
+     */
+    /**
+     * Every place the configuration is looked for, in order of preference.
+     *
+     * @return list<string> absolute paths
+     */
+    public static function configCandidates(): array
+    {
+        $root = self::projectRoot();
+
+        return array_map(static fn (string $c): string => $root . '/' . $c, self::CONFIG_CANDIDATES);
+    }
+
+    public static function configPathFromEnvironment(): ?string
+    {
+        self::loadDotEnv();
+
+        $value = Environment::fromGlobals()->get('DDNS_CONFIG');
+
+        return is_string($value) && trim($value) !== '' ? trim($value) : null;
     }
 
     private static function loadDotEnv(): void
     {
+        // Reached from both the container and the path lookup, and loading an
+        // immutable Dotenv twice would be wasted work rather than a bug.
+        if (self::$dotEnvLoaded) {
+            return;
+        }
+
+        self::$dotEnvLoaded = true;
+
         $root = self::projectRoot();
 
         if (!is_file($root . '/.env')) {

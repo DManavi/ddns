@@ -85,8 +85,8 @@ July 2023 and cannot parse these files.
 **Production:**
 
 ```bash
-cp config/ddns.example.yaml ddns.yaml   # edit: zone, record name, provider
-cp .env.example .env                    # edit: API token, host token
+cp config/ddns.example.yaml config/ddns.yaml   # edit: zone, record, provider
+cp .env.example .env                          # edit: API token, host token
 
 docker compose up -d                    # HTTP endpoint
 docker compose --profile watcher up -d  # or poll from inside your network
@@ -124,9 +124,9 @@ name to keep in sync. See [the wizard](#the-wizard) for what it writes and
 where. To configure by hand instead:
 
 ```bash
-cp config/ddns.example.yaml ddns.yaml
+cp config/ddns.example.yaml config/ddns.yaml
 cp .env.example .env
-$EDITOR ddns.yaml
+$EDITOR config/ddns.yaml
 
 ./bin/ddns config:validate      # check before going near a provider
 ```
@@ -167,7 +167,7 @@ sudo a2enconf php8.3-fpm          # or: sudo a2enmod php8.3
     ServerName ddns.example.com
 
     # public/ is the only directory that may ever be served. src/, config/,
-    # vendor/ and your ddns.yaml all live above it and stay unreachable.
+    # vendor/ and your config/ all live above it and stay unreachable.
     DocumentRoot /srv/ddns/public
 
     <Directory /srv/ddns/public>
@@ -207,7 +207,7 @@ rather than to `ddns-error.log`. Set `DDNS_LOG_LEVEL` in the pool config:
 
 ```ini
 ; /etc/php/8.3/fpm/pool.d/ddns.conf
-env[DDNS_CONFIG] = /srv/ddns/ddns.yaml
+env[DDNS_CONFIG] = /srv/ddns/config/ddns.yaml
 env[DDNS_LOG_LEVEL] = INFO
 catch_workers_output = yes
 ```
@@ -233,7 +233,7 @@ read access only. Keep the config file out of reach of everything else, since
 it names your provider credentials:
 
 ```bash
-sudo chown root:www-data /srv/ddns/ddns.yaml && sudo chmod 640 /srv/ddns/ddns.yaml
+sudo chown root:www-data /srv/ddns/config/ddns.yaml && sudo chmod 640 /srv/ddns/config/ddns.yaml
 ```
 
 **Do not set `server.trusted_proxies` for Apache alone.** Whether you use
@@ -319,8 +319,8 @@ credentials; nothing in it should be reachable over HTTP.
 
 ```
 /home/you/
-    ddns/            <- upload the whole project here, including vendor/
-        ddns.yaml    <- your config, with real tokens
+    ddns/                 <- upload the whole project here, including vendor/
+        config/ddns.yaml  <- your config, with real tokens
     public_html/     <- the document root you were given
         index.php    <- one line, below
         .htaccess    <- copied from ddns/public/.htaccess
@@ -333,8 +333,8 @@ credentials; nothing in it should be reachable over HTTP.
 ```
 
 That works because the application resolves its own paths from where its source
-lives, not from the entry point — so it finds `vendor/`, `config/` and
-`ddns.yaml` without being told. Copy `ddns/public/.htaccess` alongside it and
+lives, not from the entry point — so it finds `vendor/` and `config/ddns.yaml`
+without being told. Copy `ddns/public/.htaccess` alongside it and
 Apache is fully configured; see [Apache](#apache) for what that file does.
 
 **No shell or Composer?** Run `composer install --no-dev` on your own machine
@@ -349,17 +349,17 @@ public_html/
     index.php            <?php require __DIR__ . '/ddns-app/public/index.php';
     .htaccess            copied from ddns-app/public/.htaccess
     ddns-app/
-        .htaccess        Require all denied
-        ddns.yaml        your config
+        .htaccess            Require all denied
+        config/ddns.yaml     your config
 ```
 
-> The deny rule is not optional here. Without it `ddns-app/ddns.yaml` is an
+> The deny rule is not optional here. Without it `ddns-app/config/ddns.yaml` is an
 > ordinary static file: requesting it returns `200` and your provider token in
 > the response body. Confirm it after deploying — the first command must return
 > `403`, the second `200`:
 >
 > ```bash
-> curl -sI https://you.example.com/ddns-app/ddns.yaml | head -1
+> curl -sI https://you.example.com/ddns-app/config/ddns.yaml | head -1
 > curl -sI https://you.example.com/health | head -1
 > ```
 
@@ -372,7 +372,7 @@ versioned, so `php` may be 7.4 while `php83` is what you want — check with
 use the host's cron scheduler to run one-shot updates instead:
 
 ```cron
-*/10 * * * * DDNS_CONFIG=/home/you/ddns/ddns.yaml /usr/local/bin/php83 /home/you/ddns/bin/ddns update --all >/dev/null 2>&1
+*/10 * * * * DDNS_CONFIG=/home/you/ddns/config/ddns.yaml /usr/local/bin/php83 /home/you/ddns/bin/ddns update --all >/dev/null 2>&1
 ```
 
 Both an absolute `bin/ddns` path and `DDNS_CONFIG` work from any working
@@ -419,8 +419,16 @@ hosts:
 ```
 
 `config/ddns.example.yaml` is fully annotated. The file is discovered from
-`$DDNS_CONFIG`, then `./ddns.yaml`, `./ddns.yml`, `./config/ddns.yaml`,
-`./config/ddns.yml`; `--config` overrides all of them.
+`$DDNS_CONFIG` — which may be set in `.env` — then `./config/ddns.yaml`,
+`./config/ddns.yml`, `./ddns.yaml`, `./ddns.yml`; `--config` overrides all of
+them.
+
+`config/` is where `config:init` writes and where the container expects the
+file mounted, so the same path means the same thing on the host and in the
+image. The project root is still searched, for installations that predate
+that; if a file is found there while one also exists under `config/`, the
+`config/` one wins and `config:init` says so rather than leaving you with a
+file nothing reads.
 
 ### The wizard
 
@@ -926,7 +934,7 @@ Four commands for inspecting and changing the file without opening an editor.
 
 ```console
 $ ddns config:path                       # which file is in use
-/srv/ddns/ddns.yaml
+/srv/ddns/config/ddns.yaml
 
 $ ddns config:get hosts.home.ttl         # one value, as written
 60
