@@ -894,6 +894,9 @@ $ ddns config:init [--config=PATH] [--env=PATH] [--force]
 $ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run] [--json]
 $ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once] [--json]
 $ ddns hosts:list [--json]
+$ ddns hosts:add <name> [--provider=P] [--zone=Z] [--record=R] [--type=T]... [--ttl=N] [--token=T] [--force] [--json]
+$ ddns hosts:update <name> [--provider=P] [--zone=Z] [--record=R] [--type=T]... [--ttl=N] [--token=T] [--rotate-token] [--force] [--json]
+$ ddns hosts:remove <name> [--force] [--json]
 $ ddns providers:list [--json]
 
 $ ddns config:show [--raw] [--json]
@@ -928,6 +931,46 @@ $ ddns update --all
 
 Exit codes: `0` success, `1` at least one record failed, `2` invalid
 configuration or arguments.
+
+### Managing hosts
+
+Adding a host by hand means editing YAML and inventing a token. These do it for
+you:
+
+```console
+$ ddns hosts:add nas --provider do-personal --zone example.com
+ [OK] Added "nas" for nas.example.com.
+
+The token for this host, which is not recoverable from the configuration:
+  6f1c2a…
+
+$ ddns hosts:update nas --ttl 300 --type A --type AAAA
+$ ddns hosts:remove nas
+```
+
+Anything you leave out is asked for, so `ddns hosts:add nas` on its own works
+too; pass every option to script it. `--record` defaults to the host name, and
+`@` means the zone apex.
+
+**The token is generated, not chosen.** It goes to `.env` behind a `${VAR}`
+placeholder, so the configuration file holds no secrets and stays committable.
+It is printed once, because that is the only moment it exists in plain text —
+the file only ever holds a reference to it.
+
+`hosts:update` changes only the fields you name and leaves everything else
+exactly as written. `--rotate-token` issues a new secret behind the same
+placeholder, so the configuration file does not change and every client using
+the old token stops working immediately.
+
+`hosts:remove` **does not touch the DNS record** — this server simply stops
+keeping it up to date, which is deliberately not the same as deleting it at the
+provider. The token in `.env` is left alone too, since that file is
+hand-edited and a variable may be shared; the one that is now unused is named
+so you can remove it yourself.
+
+All three validate the result before writing, so a mistake leaves the file as
+it was, and all three ask before discarding comments. Removing the last host is
+refused, since at least one is required.
 
 ### Managing the configuration
 

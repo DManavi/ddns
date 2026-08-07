@@ -4,19 +4,13 @@ declare(strict_types=1);
 
 namespace Ddns\Console\Command;
 
-use Ddns\Config\ConfigFile;
-use Ddns\Config\ConfigLoader;
 use Ddns\Config\ConfigPath;
-use Ddns\Config\EnvInterpolator;
-use Ddns\Config\Environment;
-use Ddns\Config\Exception\ConfigurationError;
-use Ddns\Console\AbstractDdnsCommand;
+use Ddns\Console\AbstractConfigMutationCommand;
 use Ddns\Console\ConfigRedaction;
 use Ddns\Provider\ProviderFactories;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
-use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Yaml\Exception\ParseException;
@@ -39,14 +33,15 @@ use Symfony\Component\Yaml\Yaml;
     name: 'config:set',
     description: 'Change one value in the configuration file.',
 )]
-final class ConfigSetCommand extends AbstractDdnsCommand
+final class ConfigSetCommand extends AbstractConfigMutationCommand
 {
     protected function configure(): void
     {
+        $this->addForceOption();
+
         $this
             ->addArgument('key', InputArgument::REQUIRED, 'Dotted path, for example hosts.home.ttl.')
             ->addArgument('value', InputArgument::REQUIRED, 'The new value, parsed as YAML.')
-            ->addOption('force', 'f', InputOption::VALUE_NONE, 'Do not ask before discarding comments.')
             ->setHelp(<<<'HELP'
                 Values are parsed as YAML, so types come out right:
 
@@ -69,7 +64,7 @@ final class ConfigSetCommand extends AbstractDdnsCommand
 
         $key = $this->stringArgument($input, 'key');
         $path = $this->configPath();
-        $raw = ConfigFile::read($path);
+        $raw = $this->readRawConfig();
 
         try {
             $value = $this->parse($this->stringArgument($input, 'value'));
@@ -98,7 +93,7 @@ final class ConfigSetCommand extends AbstractDdnsCommand
             return self::SUCCESS;
         }
 
-        $problem = $this->validate($updated);
+        $problem = $this->validationProblem($updated);
 
         if ($problem !== null) {
             $io->error($problem);
@@ -111,7 +106,7 @@ final class ConfigSetCommand extends AbstractDdnsCommand
             return self::INVALID;
         }
 
-        ConfigFile::write($path, $updated);
+        $this->saveConfig($updated);
 
         $io->success(sprintf(
             '%s: %s -> %s',
@@ -150,47 +145,7 @@ final class ConfigSetCommand extends AbstractDdnsCommand
         }
     }
 
-    /**
-     * @param array<array-key, mixed> $config
-     */
-    private function validate(array $config): ?string
-    {
-        $loader = new ConfigLoader(
-            new EnvInterpolator(Environment::fromGlobals()),
-            $this->service(ProviderFactories::class)->catalog(),
-        );
 
-        try {
-            $loader->fromArray($config);
-        } catch (ConfigurationError $e) {
-            return $e->getMessage();
-        }
-
-        return null;
-    }
-
-    private function confirmCommentLoss(SymfonyStyle $io, InputInterface $input, string $path): bool
-    {
-        if ($input->getOption('force') === true) {
-            return true;
-        }
-
-        // Only worth asking when there is something to lose: the header the
-        // wizard writes is re-emitted, so a file it produced passes silently.
-        if (!ConfigFile::hasComments((string) file_get_contents($path))) {
-            return true;
-        }
-
-        if (!$input->isInteractive()) {
-            $io->error(sprintf('%s contains comments, which rewriting would discard. Pass --force to proceed.', $path));
-
-            return false;
-        }
-
-        $io->warning(sprintf('Rewriting %s will discard its comments.', $path));
-
-        return $io->confirm('Continue?', false);
-    }
 
     /**
      * A literal credential in the configuration file is a file that can no

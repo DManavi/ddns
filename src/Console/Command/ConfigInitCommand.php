@@ -19,6 +19,7 @@ use Ddns\Domain\Record\RecordType;
 use Ddns\Provider\Azure\AzureZoneKind;
 use Ddns\Provider\ProviderFactories;
 use Ddns\Provider\ProviderFactory;
+use Ddns\Support\Services;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -191,7 +192,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
     {
         $explicit = $input->getOption('env');
 
-        return is_string($explicit) && $explicit !== '' ? $explicit : Bootstrap::projectRoot() . '/.env';
+        return is_string($explicit) && $explicit !== '' ? $explicit : Services::string($this->container, 'env.path');
     }
 
     private function targetPath(InputInterface $input): string

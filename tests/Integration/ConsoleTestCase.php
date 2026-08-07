@@ -37,6 +37,12 @@ abstract class ConsoleTestCase extends TestCase
 {
     private ?MockHttpClient $upstream = null;
 
+    /**
+     * Where the commands write secrets. A scratch file, never the project's
+     * own .env, which is a real developer's file and not this suite's to edit.
+     */
+    protected ?string $envFile = null;
+
     /** @var list<string> */
     private array $tempFiles = [];
 
@@ -106,6 +112,7 @@ abstract class ConsoleTestCase extends TestCase
         $builder->addDefinitions($definitions);
         $builder->addDefinitions([
             'config.path' => $configPath,
+            'env.path' => $this->envFile ??= $this->tempFile(''),
             ClientInterface::class => $this->upstream(),
             LoggerInterface::class => new NullLogger(),
             // The resolver builds its own Guzzle client in the container, so
@@ -147,6 +154,7 @@ abstract class ConsoleTestCase extends TestCase
         $builder->addDefinitions($definitions);
         $builder->addDefinitions([
             'config.path' => $configPath,
+            'env.path' => $this->envFile ??= $this->tempFile(''),
             ClientInterface::class => $this->upstream(),
             LoggerInterface::class => new NullLogger(),
         ]);
@@ -221,6 +229,7 @@ abstract class ConsoleTestCase extends TestCase
         $builder->addDefinitions($definitions);
         $builder->addDefinitions([
             'config.path' => $configPath,
+            'env.path' => $this->envFile ??= $this->tempFile(''),
             ClientInterface::class => $this->upstream(),
             LoggerInterface::class => new NullLogger(),
         ]);
