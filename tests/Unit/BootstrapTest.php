@@ -162,6 +162,17 @@ final class BootstrapTest extends TestCase
                 '"%s" pins a configuration file, so it would not use the one config:init writes.',
                 $name,
             ));
+
+            // Whatever a profile falls back to has to be there, or a fresh
+            // clone gets an error on the first press of play.
+            $fallback = $env['DDNS_CONFIG_FALLBACK'] ?? null;
+
+            if (is_string($fallback)) {
+                self::assertFileExists(
+                    str_replace('${workspaceFolder}', Bootstrap::projectRoot(), $fallback),
+                    sprintf('"%s" falls back to a file that is not in the repository.', $name),
+                );
+            }
         }
     }
 
@@ -170,29 +181,36 @@ final class BootstrapTest extends TestCase
      * with no setup, which is what removing the pin had taken away. It applies
      * only when nothing real is found, so it steps aside the moment
      * `config:init` has written something.
+     *
+     * Uses a file of its own rather than the committed sample, so it tests the
+     * mechanism wherever it runs - the images ship the application, not the
+     * sample configuration.
      */
     #[Test]
     public function the_fallback_is_used_only_when_nothing_real_exists(): void
     {
-        $sample = Bootstrap::projectRoot() . '/ddns.dev.yaml';
+        $fallback = tempnam(sys_get_temp_dir(), 'ddns-fallback-') ?: throw new \RuntimeException('tempnam failed');
+        file_put_contents($fallback, "hosts: {}\n");
 
-        self::assertFileExists($sample, 'The committed sample is what the fallback points at.');
+        try {
+            $_ENV['DDNS_CONFIG_FALLBACK'] = $fallback;
 
-        $_ENV['DDNS_CONFIG_FALLBACK'] = $sample;
+            $existing = array_values(array_filter(Bootstrap::configCandidates(), 'is_file'));
 
-        $existing = array_values(array_filter(Bootstrap::configCandidates(), 'is_file'));
+            if ($existing !== []) {
+                // A real configuration is present, so it wins outright and the
+                // fallback is not reported as being in use.
+                self::assertSame($existing[0], Bootstrap::discoverConfigPath());
+                self::assertFalse(Bootstrap::isFallbackConfig($existing[0]));
 
-        if ($existing !== []) {
-            // A real configuration is present, so it wins and the fallback is
-            // not reported as being in use.
-            self::assertSame($existing[0], Bootstrap::discoverConfigPath());
-            self::assertFalse(Bootstrap::isFallbackConfig(Bootstrap::discoverConfigPath()));
+                return;
+            }
 
-            return;
+            self::assertSame($fallback, Bootstrap::discoverConfigPath());
+            self::assertTrue(Bootstrap::isFallbackConfig($fallback));
+        } finally {
+            unlink($fallback);
         }
-
-        self::assertSame($sample, Bootstrap::discoverConfigPath());
-        self::assertTrue(Bootstrap::isFallbackConfig($sample));
     }
 
     #[Test]
