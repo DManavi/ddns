@@ -93,8 +93,22 @@ return [
         Services::get($c, ProviderFactories::class)->catalog(),
     ),
 
-    Configuration::class => static fn (ContainerInterface $c): Configuration => Services::get($c, ConfigLoader::class)
-        ->load(Services::string($c, 'config.path')),
+    Configuration::class => static function (ContainerInterface $c): Configuration {
+        $path = Services::string($c, 'config.path');
+        $configuration = Services::get($c, ConfigLoader::class)->load($path);
+
+        // Which file was actually loaded is the first thing you need when the
+        // answer surprises you - a token that works from the CLI and not over
+        // HTTP usually means the two read different files. Debug level, so it
+        // costs nothing in production and shows up whenever someone has turned
+        // the logs up to find out what is going on.
+        Services::get($c, LoggerInterface::class)->debug('Loaded configuration.', [
+            'path' => $path,
+            'hosts' => count($configuration->hosts()),
+        ]);
+
+        return $configuration;
+    },
 
     ServerConfig::class => static fn (ContainerInterface $c): ServerConfig => Services::get($c, Configuration::class)
         ->server(),

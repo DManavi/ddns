@@ -101,6 +101,47 @@ final class BootstrapTest extends TestCase
         self::assertNull(Bootstrap::configPathFromEnvironment());
     }
 
+    /**
+     * The editor profiles used to pin DDNS_CONFIG at the committed sample, so
+     * pressing play served a different file - and a different host token -
+     * from the one `config:init` had just written, with nothing to say so.
+     * They now use the same discovery as everything else.
+     */
+    #[Test]
+    public function the_editor_profiles_do_not_pin_a_configuration_file(): void
+    {
+        $path = Bootstrap::projectRoot() . '/.vscode/launch.json';
+
+        self::assertFileExists($path);
+
+        $stripped = (string) preg_replace('#^\s*//.*$#m', '', (string) file_get_contents($path));
+        $decoded = json_decode($stripped, true);
+
+        self::assertIsArray($decoded);
+        self::assertIsArray($decoded['configurations'] ?? null);
+
+        foreach ($decoded['configurations'] as $configuration) {
+            self::assertIsArray($configuration);
+
+            $name = is_string($configuration['name'] ?? null) ? $configuration['name'] : '?';
+            $env = $configuration['env'] ?? [];
+
+            self::assertIsArray($env);
+
+            // One profile exists precisely to run the sample, and says so.
+            if (str_contains($name, 'sample')) {
+                self::assertArrayHasKey('DDNS_CONFIG', $env, $name);
+
+                continue;
+            }
+
+            self::assertArrayNotHasKey('DDNS_CONFIG', $env, sprintf(
+                '"%s" pins a configuration file, so it would not use the one config:init writes.',
+                $name,
+            ));
+        }
+    }
+
     #[Test]
     public function surrounding_whitespace_is_trimmed(): void
     {
