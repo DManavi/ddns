@@ -71,6 +71,12 @@ final class Bootstrap
             // Resolved lazily so commands that need no configuration - such as
             // `providers:list` and `--help` - still work before a file exists.
             'config.path' => $configPath ?? \DI\factory(static fn (): string => self::discoverConfigPath()),
+
+            // Where secrets are written. A binding rather than a constant so a
+            // test can point it somewhere harmless: only the project's own
+            // .env is loaded at runtime, so this is the only place a ${VAR}
+            // placeholder can actually be resolved from.
+            'env.path' => self::projectRoot() . '/.env',
         ]);
 
         return $builder->build();

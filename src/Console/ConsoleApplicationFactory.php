@@ -11,7 +11,10 @@ use Ddns\Console\Command\ConfigPathCommand;
 use Ddns\Console\Command\ConfigSetCommand;
 use Ddns\Console\Command\ConfigShowCommand;
 use Ddns\Console\Command\ConfigValidateCommand;
+use Ddns\Console\Command\HostsAddCommand;
 use Ddns\Console\Command\HostsListCommand;
+use Ddns\Console\Command\HostsRemoveCommand;
+use Ddns\Console\Command\HostsUpdateCommand;
 use Ddns\Console\Command\ProvidersListCommand;
 use Ddns\Console\Command\UpdateCommand;
 use Ddns\Console\Command\WatchCommand;
@@ -33,6 +36,9 @@ final class ConsoleApplicationFactory
             new UpdateCommand($container),
             new WatchCommand($container),
             new HostsListCommand($container),
+            new HostsAddCommand($container),
+            new HostsUpdateCommand($container),
+            new HostsRemoveCommand($container),
             new ConfigInitCommand($container),
             new ConfigValidateCommand($container),
             new ConfigShowCommand($container),
