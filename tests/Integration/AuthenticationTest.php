@@ -158,6 +158,66 @@ final class AuthenticationTest extends HttpTestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
+    /**
+     * The token is per host, so a correct token against the wrong host name is
+     * rejected - and the message has to say so. It used to talk only about
+     * credentials, which sent people to check the one thing that was right and
+     * to try every transport in turn watching each fail the same way.
+     */
+    public function testTheRejectionMessageNamesTheHostAsWellAsTheToken(): void
+    {
+        // The right token, against a host name that is not configured.
+        $response = $this->request('GET', '/v1/hosts/nosuchhost/update', [
+            'Authorization' => 'Bearer ' . self::HOST_TOKEN,
+        ]);
+
+        self::assertSame(401, $response->getStatusCode());
+
+        $message = $this->atString($response, 'error.message');
+
+        self::assertStringContainsString('host', $message);
+        self::assertStringContainsString('token', $message);
+    }
+
+    /**
+     * The same secret pasted with a stray space authenticated as a bearer
+     * credential, whose pattern trimmed it, and was refused as a query
+     * parameter, which did not. One secret, one host, two answers.
+     */
+    public function testSurroundingWhitespaceIsIgnoredInEveryTransport(): void
+    {
+        $padded = ' ' . self::HOST_TOKEN . ' ';
+
+        $this->expectUnchangedFlow('203.0.113.7');
+        self::assertSame(200, $this->request('GET', '/v1/hosts/home/update', [
+            'Authorization' => 'Bearer ' . $padded,
+        ])->getStatusCode());
+
+        $this->expectUnchangedFlow('203.0.113.7');
+        self::assertSame(200, $this->request(
+            'GET',
+            '/v1/hosts/home/update?token=' . rawurlencode($padded),
+        )->getStatusCode());
+
+        $this->expectUnchangedFlow('203.0.113.7');
+        self::assertSame(200, $this->requestWithServerParams(
+            'GET',
+            '/v1/hosts/home/update',
+            [],
+            ['PHP_AUTH_USER' => 'home', 'PHP_AUTH_PW' => $padded],
+        )->getStatusCode());
+    }
+
+    /**
+     * Whitespace is trimmed, not treated as a credential of its own.
+     */
+    public function testAWhitespaceOnlyTokenIsNotACredential(): void
+    {
+        $response = $this->request('GET', '/v1/hosts/home/update?token=%20%20');
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
     public function testRejectsARequestWithNoCredentials(): void
     {
         $response = $this->request('GET', '/v1/hosts/home/update');

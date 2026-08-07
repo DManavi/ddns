@@ -19,12 +19,14 @@ use Slim\Routing\RouteContext;
  * Authenticates a client against the token configured for the host it targets.
  *
  * Three transports are accepted, because the clients are routers and shell
- * scripts rather than browsers:
+ * scripts rather than browsers. A client may present several at once - Swagger
+ * UI applies every scheme that has been authorised - so each is checked, and
+ * the order below only decides which is used when more than one is valid:
  *
- *  - `Authorization: Bearer <token>` for anything modern;
- *  - HTTP Basic, where the password is the token, which is all many consumer
- *    routers can send;
- *  - a `token` query parameter, for clients that can only be given a URL.
+ *  1. a `token` query parameter, for clients that can only be given a URL;
+ *  2. an `Authorization` header carrying the token as a bearer credential;
+ *  3. HTTP Basic, where the password is the token, which is all many consumer
+ *     routers can send.
  *
  * The comparison is constant time and is performed even when the host does not
  * exist, so an attacker cannot use response timing to enumerate host names.
@@ -39,8 +41,18 @@ final class AuthenticationMiddleware implements MiddlewareInterface
      */
     private const DECOY_TOKEN = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 
-    private const UNAUTHORISED_MESSAGE = 'Authentication failed. Provide the host token via an '
-        . 'Authorization Bearer header, HTTP Basic password, or the "token" query parameter.';
+    /**
+     * Names both things that can be wrong, because only one of them used to be
+     * mentioned and it was the less likely one. A caller who has the token right
+     * but the host wrong was told to check the token, so they would try every
+     * transport in turn and watch all of them fail the same way.
+     *
+     * Deliberately one message for both causes: saying which of them was wrong
+     * would turn this endpoint into a way to discover which hosts exist.
+     */
+    private const UNAUTHORISED_MESSAGE = 'Authentication failed. Check that the host named in the URL is '
+        . 'one you have configured, and that the token is that host\'s own. Supply the token as a bearer '
+        . 'credential, as the password with HTTP Basic, or as a "token" query parameter.';
 
     public function __construct(
         private readonly Configuration $configuration,
@@ -66,8 +78,12 @@ final class AuthenticationMiddleware implements MiddlewareInterface
         }
 
         if ($host === null || !$tokenIsValid) {
-            $this->logger->warning('Rejected an unauthenticated update request.', [
+            // The client is told neither of these, but the operator reading
+            // the log is: it is the difference between a typo in the URL and a
+            // stale token, and there is no oracle in a server-side log.
+            $this->logger->warning('Rejected an unauthenticated request.', [
                 'host' => $hostName,
+                'reason' => $host === null ? 'no such host is configured' : 'no supplied token matched',
                 'client_ip' => TrustedProxyMiddleware::clientIpFrom($request)?->value(),
                 'credentials_supplied' => count($presented),
             ]);
@@ -152,7 +168,7 @@ final class AuthenticationMiddleware implements MiddlewareInterface
         $header = $request->getHeaderLine('Authorization');
 
         if (preg_match('/^Bearer\s+(.+)$/i', trim($header), $matches) === 1) {
-            $candidates[] = trim($matches[1]);
+            $candidates[] = $matches[1];
         }
 
         $basic = $this->decodeBasicAuth($request);
@@ -169,8 +185,18 @@ final class AuthenticationMiddleware implements MiddlewareInterface
             $candidates[] = $password;
         }
 
+        // Trimmed in one place so every transport behaves the same. The header
+        // form was already trimmed by its own pattern while the query string
+        // was not, so a token pasted with a trailing space authenticated as a
+        // Bearer credential and was rejected as a query parameter - the same
+        // secret, the same host, two different answers.
+        //
+        // Configured tokens are trimmed by the loader, so this compares like
+        // with like rather than loosening what counts as a match.
+        $candidates = array_map(trim(...), $candidates);
+
         // Sending the same secret twice is not two attempts.
-        return array_values(array_unique($candidates));
+        return array_values(array_unique(array_filter($candidates, static fn (string $c): bool => $c !== '')));
     }
 
     /**
