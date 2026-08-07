@@ -10,8 +10,9 @@
   // a different config, and a different host token, from the one the wizard
   // had just given you.
   //
-  // For a fresh clone with no configuration yet, "Serve (sample config)" runs
-  // against the committed ddns.dev.yaml and needs no setup at all.
+  // DDNS_CONFIG_FALLBACK is used only when no real configuration exists, so a
+  // fresh clone still runs with no setup at all and stops doing so the moment
+  // you have your own. The server says which of the two it loaded as it starts.
   "version": "0.2.0",
   "configurations": [
     {
@@ -36,6 +37,7 @@
       "program": "${workspaceFolder}/public/index.php",
       "cwd": "${workspaceFolder}",
       "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003,
@@ -90,6 +92,7 @@
       "program": "${workspaceFolder}/public/index.php",
       "cwd": "${workspaceFolder}",
       "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003,
@@ -106,7 +109,10 @@
       "program": "${workspaceFolder}/bin/ddns",
       "args": ["hosts:list"],
       "cwd": "${workspaceFolder}",
-      "env": { "DDNS_LOG_LEVEL": "DEBUG" },
+      "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
       "port": 9003
     },
     {
@@ -116,7 +122,10 @@
       "program": "${workspaceFolder}/bin/ddns",
       "args": ["config:validate"],
       "cwd": "${workspaceFolder}",
-      "env": { "DDNS_LOG_LEVEL": "DEBUG" },
+      "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
       "port": 9003
     },
     {
@@ -128,7 +137,10 @@
       "program": "${workspaceFolder}/bin/ddns",
       "args": ["update", "--all", "--dry-run", "-v"],
       "cwd": "${workspaceFolder}",
-      "env": { "DDNS_LOG_LEVEL": "DEBUG" },
+      "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
       "port": 9003
     },
     {
@@ -139,7 +151,10 @@
       "program": "${workspaceFolder}/bin/ddns",
       "args": ["watch", "--all", "--interval", "30", "-v"],
       "cwd": "${workspaceFolder}",
-      "env": { "DDNS_LOG_LEVEL": "DEBUG" },
+      "env": {
+        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
+        "DDNS_LOG_LEVEL": "DEBUG"
+      },
       "port": 9003,
       // Ctrl+C is not available in the debug console, and watch installs
       // signal handlers, so use the stop button - it terminates the process.

@@ -421,7 +421,8 @@ hosts:
 `config/ddns.example.yaml` is fully annotated. The file is discovered from
 `$DDNS_CONFIG` — which may be set in `.env` — then `./config/ddns.yaml`,
 `./config/ddns.yml`, `./ddns.yaml`, `./ddns.yml`; `--config` overrides all of
-them.
+them. `$DDNS_CONFIG_FALLBACK` is consulted only when none of those exist, and
+is meant for development; see [VS Code](#vs-code).
 
 `config/` is where `config:init` writes and where the container expects the
 file mounted, so the same path means the same thing on the host and in the
@@ -1242,10 +1243,15 @@ For the CLI, `DDNS_CONFIG=ddns.dev.yaml ./bin/ddns hosts:list`.
 ### VS Code
 
 `.vscode/launch.json` is committed, so **Run and Debug** is populated the
-moment the repository is opened. The profiles use the same configuration the
-application would find on its own — `config/ddns.yaml`, as written by
-`config:init` — so what you debug is what you configured. Only the *sample*
-profile pins a file, and its name says so.
+moment the repository is opened, and it needs no setup: the profiles fall back
+to the committed `ddns.dev.yaml` when you have no configuration of your own.
+As soon as `config:init` has written one, that is used instead — so what you
+debug is what you configured, and a fresh clone still runs on the first press.
+
+The fallback is `DDNS_CONFIG_FALLBACK`, which nothing sets in production;
+without it, a server with no configuration refuses to start rather than
+quietly answering with a sample whose host token is published in this
+repository.
 
 | Profile | What it does |
 | --- | --- |
@@ -1275,11 +1281,14 @@ Every profile sets `DDNS_LOG_LEVEL=DEBUG`, and the application logs which
 configuration file it loaded as it starts:
 
 ```
-ddns.DEBUG: Loaded configuration. {"path":"/…/config/ddns.yaml","hosts":1}
+ddns.DEBUG:  Loaded configuration. {"path":"/…/config/ddns.yaml","hosts":1}
+ddns.NOTICE: Loaded a fallback configuration; run `ddns config:init` to create your own.
 ```
 
 That is the first line to check whenever a token works in one place and not
-another — it usually means two things are reading two different files.
+another — it usually means two things are reading two different files. The
+fallback notice is a `NOTICE` rather than a `DEBUG`, so it shows without
+turning the logs up.
 
 Personal settings stay out of the repository: `.vscode/` is gitignored apart
 from `launch.json` and `extensions.json`.

@@ -102,10 +102,16 @@ return [
         // HTTP usually means the two read different files. Debug level, so it
         // costs nothing in production and shows up whenever someone has turned
         // the logs up to find out what is going on.
-        Services::get($c, LoggerInterface::class)->debug('Loaded configuration.', [
-            'path' => $path,
-            'hosts' => count($configuration->hosts()),
-        ]);
+        $logger = Services::get($c, LoggerInterface::class);
+        $context = ['path' => $path, 'hosts' => count($configuration->hosts())];
+
+        // A sample configuration standing in for a real one is worth saying
+        // out loud, at a level that shows without turning the logs up.
+        if (Bootstrap::isFallbackConfig($path)) {
+            $logger->notice('Loaded a fallback configuration; run `ddns config:init` to create your own.', $context);
+        } else {
+            $logger->debug('Loaded configuration.', $context);
+        }
 
         return $configuration;
     },

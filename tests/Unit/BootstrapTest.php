@@ -14,6 +14,8 @@ final class BootstrapTest extends TestCase
 {
     private string|false $savedProcess = false;
 
+    private string|false $savedFallback = false;
+
     private ?string $savedEnv = null;
 
     private ?string $savedServer = null;
@@ -22,6 +24,7 @@ final class BootstrapTest extends TestCase
     {
         // DDNS_CONFIG is process-wide, so it is put back afterwards rather
         // than left set for whatever runs next.
+        $this->savedFallback = getenv('DDNS_CONFIG_FALLBACK');
         $this->savedProcess = getenv('DDNS_CONFIG');
         $this->savedEnv = is_string($_ENV['DDNS_CONFIG'] ?? null) ? $_ENV['DDNS_CONFIG'] : null;
         $this->savedServer = is_string($_SERVER['DDNS_CONFIG'] ?? null) ? $_SERVER['DDNS_CONFIG'] : null;
@@ -44,12 +47,22 @@ final class BootstrapTest extends TestCase
         if (is_string($this->savedProcess)) {
             putenv('DDNS_CONFIG=' . $this->savedProcess);
         }
+
+        if (is_string($this->savedFallback)) {
+            putenv('DDNS_CONFIG_FALLBACK=' . $this->savedFallback);
+        }
     }
 
     private function clear(): void
     {
         putenv('DDNS_CONFIG');
-        unset($_ENV['DDNS_CONFIG'], $_SERVER['DDNS_CONFIG']);
+        putenv('DDNS_CONFIG_FALLBACK');
+        unset(
+            $_ENV['DDNS_CONFIG'],
+            $_SERVER['DDNS_CONFIG'],
+            $_ENV['DDNS_CONFIG_FALLBACK'],
+            $_SERVER['DDNS_CONFIG_FALLBACK'],
+        );
     }
 
     #[Test]
@@ -150,6 +163,67 @@ final class BootstrapTest extends TestCase
                 $name,
             ));
         }
+    }
+
+    /**
+     * The editor profiles set a fallback so a clone with no configuration runs
+     * with no setup, which is what removing the pin had taken away. It applies
+     * only when nothing real is found, so it steps aside the moment
+     * `config:init` has written something.
+     */
+    #[Test]
+    public function the_fallback_is_used_only_when_nothing_real_exists(): void
+    {
+        $sample = Bootstrap::projectRoot() . '/ddns.dev.yaml';
+
+        self::assertFileExists($sample, 'The committed sample is what the fallback points at.');
+
+        $_ENV['DDNS_CONFIG_FALLBACK'] = $sample;
+
+        $existing = array_values(array_filter(Bootstrap::configCandidates(), 'is_file'));
+
+        if ($existing !== []) {
+            // A real configuration is present, so it wins and the fallback is
+            // not reported as being in use.
+            self::assertSame($existing[0], Bootstrap::discoverConfigPath());
+            self::assertFalse(Bootstrap::isFallbackConfig(Bootstrap::discoverConfigPath()));
+
+            return;
+        }
+
+        self::assertSame($sample, Bootstrap::discoverConfigPath());
+        self::assertTrue(Bootstrap::isFallbackConfig($sample));
+    }
+
+    #[Test]
+    public function nothing_falls_back_unless_it_is_asked_for(): void
+    {
+        // Production sets no fallback. Starting up on a sample configuration -
+        // whose host token is published in this repository - would be worse
+        // than refusing to start.
+        if (array_filter(Bootstrap::configCandidates(), 'is_file') !== []) {
+            self::markTestSkipped('A real configuration is present, so there is nothing to fall back from.');
+        }
+
+        $this->expectException(\Ddns\Config\Exception\ConfigurationError::class);
+
+        Bootstrap::discoverConfigPath();
+    }
+
+    #[Test]
+    public function a_fallback_that_is_not_there_is_ignored(): void
+    {
+        // A stale path in the environment must not become a configuration
+        // file the loader then fails to read: it is simply not a candidate.
+        if (array_filter(Bootstrap::configCandidates(), 'is_file') !== []) {
+            self::markTestSkipped('A real configuration is present, so the fallback is never reached.');
+        }
+
+        $_ENV['DDNS_CONFIG_FALLBACK'] = '/tmp/ddns-no-such-fallback.yaml';
+
+        $this->expectException(\Ddns\Config\Exception\ConfigurationError::class);
+
+        Bootstrap::discoverConfigPath();
     }
 
     #[Test]

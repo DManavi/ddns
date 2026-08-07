@@ -102,6 +102,17 @@ final class Bootstrap
             }
         }
 
+        // Only reached when nothing real exists. The editor profiles point
+        // this at the committed sample so that a fresh clone runs with no
+        // setup at all; nothing sets it in production, where starting up on a
+        // sample configuration - with a token published in this repository -
+        // would be far worse than refusing to start.
+        $fallback = self::environment()->get('DDNS_CONFIG_FALLBACK');
+
+        if (is_string($fallback) && trim($fallback) !== '' && is_file(trim($fallback))) {
+            return trim($fallback);
+        }
+
         throw ConfigurationError::notFound(self::configCandidates());
     }
 
@@ -128,11 +139,31 @@ final class Bootstrap
 
     public static function configPathFromEnvironment(): ?string
     {
-        self::loadDotEnv();
-
-        $value = Environment::fromGlobals()->get('DDNS_CONFIG');
+        $value = self::environment()->get('DDNS_CONFIG');
 
         return is_string($value) && trim($value) !== '' ? trim($value) : null;
+    }
+
+    /**
+     * Whether the configuration in use is only there because nothing real was
+     * found, so callers can say so rather than let it pass unnoticed.
+     */
+    public static function isFallbackConfig(string $path): bool
+    {
+        $fallback = self::environment()->get('DDNS_CONFIG_FALLBACK');
+
+        if (!is_string($fallback) || trim($fallback) === '') {
+            return false;
+        }
+
+        return (realpath(trim($fallback)) ?: trim($fallback)) === (realpath($path) ?: $path);
+    }
+
+    private static function environment(): Environment
+    {
+        self::loadDotEnv();
+
+        return Environment::fromGlobals();
     }
 
     private static function loadDotEnv(): void
