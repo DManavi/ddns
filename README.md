@@ -896,10 +896,12 @@ for humans:
 | Code | Meaning |
 | --- | --- |
 | `200` | Handled; see `status` for `created` / `updated` / `unchanged` |
-| `401` | Missing or wrong token |
+| `401` | Missing or wrong token, or no such host — deliberately the same answer, so this cannot be used to discover which hosts exist |
 | `404` | No such endpoint, or the zone does not exist on the provider |
+| `405` | A method the endpoint does not offer, such as `DELETE /v1/hosts/{host}` |
 | `422` | Malformed address, or a private address with `allow_private_ips: false` |
 | `429` | The provider is rate limiting us |
+| `500` | The server's own configuration is broken, or an unexpected error — details go to the log, never to the client |
 | `501` | The driver's optional dependency is missing from this build |
 | `502` | The provider rejected our credentials or failed |
 
@@ -944,8 +946,9 @@ failing with a stack trace:
 $ ddns hosts:list
  [ERROR] No configuration file found.
 
-         Create one with:
-           ddns config:init
+         Create one with either of:
+           ddns config:init            answer a few questions
+           ddns config:init --sample   a working local configuration, no questions
 ...
 ```
 
@@ -983,9 +986,10 @@ too; pass every option to script it. `--record` defaults to the host name, and
 `@` means the zone apex.
 
 **The token is generated, not chosen.** It goes to `.env` behind a `${VAR}`
-placeholder, so the configuration file holds no secrets and stays committable.
-It is printed once, because that is the only moment it exists in plain text —
-the file only ever holds a reference to it.
+placeholder, so the configuration file holds no secrets and stays committable —
+it holds only a reference. The command prints the token once, since the
+configuration cannot give it back to you; `.env` can, with
+`grep '^NAS_TOKEN=' .env`, and is written `0600` for that reason.
 
 `hosts:update` changes only the fields you name and leaves everything else
 exactly as written. `--rotate-token` issues a new secret behind the same

@@ -171,10 +171,10 @@ configuration with generated credentials. The dev Compose stack and the editor
 profiles both expect one of those to have been run.
 
 **No secret belongs in the YAML.** Configuration holds `${VAR}` placeholders;
-values live in `.env`, written `0600`. Commands that generate a token print it
-once and never again, because nothing stores it in recoverable form — except
-`--sample`, which prints neither of the two it generates and points at `.env`,
-since a development token is read back far more often than it is used once.
+values live in `.env`, written `0600`. A command that generates a token prints
+it once because the *configuration* cannot give it back — `.env` can, which is
+what `--sample` points at rather than echoing two credentials nobody asked to
+see.
 
 Two container bindings are the seams for redirecting I/O — `config.path` and
 `env.path`. Tests override both. If you add a command that writes somewhere new,

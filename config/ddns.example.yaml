@@ -1,7 +1,11 @@
 # ddns configuration
 #
-# Copy to ddns.yaml in the project root (or point $DDNS_CONFIG at it) and edit.
+# Copy to config/ddns.yaml, which is the only path searched, and edit. Point
+# $DDNS_CONFIG at it to keep it somewhere else.
 # Validate with: ddns config:validate
+#
+# `ddns config:init` writes this file for you, and `ddns config:init --sample`
+# writes a working one for local development without asking anything.
 #
 # Secrets are written as ${ENV_VAR} placeholders so this file can be committed
 # safely. Values come from the environment or a .env file at runtime.
