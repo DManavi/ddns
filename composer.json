@@ -63,6 +63,7 @@
     },
     "scripts": {
         "test": "phpunit",
+        "test:coverage": "phpunit --coverage-clover=build/coverage.xml --coverage-text",
         "analyse": "phpstan analyse --memory-limit=512M",
         "fmt": "php-cs-fixer fix",
         "fmt:check": "php-cs-fixer fix --dry-run --diff",
@@ -76,6 +77,7 @@
     },
     "scripts-descriptions": {
         "test": "Run the PHPUnit test suite.",
+        "test:coverage": "Run the tests with line coverage. Needs pcov or Xdebug.",
         "analyse": "Run PHPStan static analysis at level max.",
         "fmt": "Apply PHP-CS-Fixer formatting.",
         "fmt:check": "Verify formatting without writing changes.",

@@ -91,6 +91,27 @@ jobs:
             exit 1
           }
 
+      # The README's PHP badge is static, so that it says something true before
+      # the package is published rather than reading "not found" from Packagist.
+      # The price of that is drift, which this is here to prevent.
+      - name: Confirm the PHP badge matches composer.json
+        run: |
+          set -euo pipefail
+
+          # shellcheck disable=SC2016  # $c and $m are PHP variables; the
+          # single quotes are what keeps the shell out of them.
+          required="$(php -r '
+            $c = json_decode(file_get_contents("composer.json"), true);
+            preg_match("/(\d+\.\d+)/", $c["require"]["php"], $m);
+            echo $m[1];
+          ')"
+
+          grep -qF "img.shields.io/badge/php-${required}%2B-" README.md || {
+            echo "composer.json requires PHP ${required}, which the README badge does not say." >&2
+            grep -o 'img.shields.io/badge/php-[^)]*' README.md >&2 || true
+            exit 1
+          }
+
   docker:
     name: Docker images
     runs-on: ubuntu-latest
@@ -156,3 +177,129 @@ jobs:
         run: |
           docker compose -f compose.dev.yaml config --quiet
           test "$(docker compose -f compose.dev.yaml config --services)" = "server"
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # pcov rather than Xdebug: it exists to do this one thing, and does it
+      # several times faster on a suite this size.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, curl, xml, pcntl
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v3
+        with:
+          composer-options: "--prefer-dist"
+
+      # The script decides what the badge claims, so it proves itself first.
+      - name: Test the coverage rules
+        run: php .github/scripts/coverage-badge.php --self-test
+
+      - name: Measure coverage
+        run: composer test:coverage
+
+      # Writes the shields.io endpoint document the README badge reads. On a
+      # pull request this only reports; the commit below happens on main.
+      - name: Work out the percentage
+        id: coverage
+        run: |
+          set -euo pipefail
+          php .github/scripts/coverage-badge.php \
+            --clover=build/coverage.xml \
+            --badge=.github/badges/coverage.json | tee -a "$GITHUB_OUTPUT"
+
+      - name: Report it
+        env:
+          PERCENT: ${{ steps.coverage.outputs.percent }}
+          COVERED: ${{ steps.coverage.outputs.covered }}
+          TOTAL: ${{ steps.coverage.outputs.total }}
+        run: |
+          {
+            echo "### Coverage"
+            echo
+            echo "\`$PERCENT%\` — $COVERED of $TOTAL statements."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-clover
+          path: build/coverage.xml
+          retention-days: 14
+
+  badge:
+    name: Publish the coverage badge
+    runs-on: ubuntu-latest
+    needs: coverage
+    # Only from main, and never from a fork's pull request, which has no write
+    # access and no business moving the number the README shows.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      # To commit .github/badges/coverage.json when the number moves.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, curl, xml, pcntl
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v3
+        with:
+          composer-options: "--prefer-dist"
+
+      - name: Measure coverage
+        run: composer test:coverage
+
+      - name: Rewrite the badge
+        run: |
+          php .github/scripts/coverage-badge.php \
+            --clover=build/coverage.xml \
+            --badge=.github/badges/coverage.json
+
+      # Committed rather than uploaded somewhere, so the badge needs no account
+      # anywhere and no token beyond this one. [skip ci] is belt and braces: a
+      # push made with GITHUB_TOKEN does not start another workflow.
+      - name: Commit it when the number moved
+        run: |
+          set -euo pipefail
+
+          # Staged first, then compared against the index: `git diff` alone is
+          # blind to an untracked file, so a badge that had been deleted would
+          # be regenerated and then silently not committed.
+          git add .github/badges/coverage.json
+
+          if git diff --cached --quiet -- .github/badges/coverage.json; then
+            echo "Coverage is unchanged; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "chore: update the coverage badge [skip ci]" -- .github/badges/coverage.json
+
+          # The release workflow also pushes to main, and the two can land
+          # together. Rebasing beats failing over a generated file.
+          git pull --rebase --autostash origin main
+          git push origin main

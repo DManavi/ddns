@@ -4,6 +4,10 @@
 /.phpunit.result.cache
 /composer.lock.bak
 
+# Coverage reports. The badge data generated from them is committed;
+# the reports themselves are not.
+/build/
+
 # Local runtime configuration and secrets. The configuration is generated -
 # by `ddns config:init` or `ddns config:init --sample` - and never committed,
 # so that only one file can ever be the one the application reads.

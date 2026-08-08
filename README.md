@@ -1,5 +1,14 @@
 # ddns
 
+[![CI](https://github.com/DManavi/ddns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DManavi/ddns/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FDManavi%2Fddns%2Fmain%2F.github%2Fbadges%2Fcoverage.json)](https://github.com/DManavi/ddns/actions/workflows/ci.yml)
+[![Packagist Version](https://img.shields.io/packagist/v/dmanavi/ddns?label=packagist)](https://packagist.org/packages/dmanavi/ddns)
+[![Packagist Downloads](https://img.shields.io/packagist/dm/dmanavi/ddns?label=installs%2Fmonth)](https://packagist.org/packages/dmanavi/ddns/stats)
+[![Docker Pulls](https://img.shields.io/docker/pulls/dmanavi/ddns?label=docker%20pulls&logo=docker&logoColor=white)](https://hub.docker.com/r/dmanavi/ddns)
+[![Docker Image Size](https://img.shields.io/docker/image-size/dmanavi/ddns/latest?label=image&logo=docker&logoColor=white)](https://hub.docker.com/r/dmanavi/ddns/tags)
+[![PHP Version](https://img.shields.io/badge/php-8.2%2B-777bb4?logo=php&logoColor=white)](https://www.php.net/supported-versions.php)
+[![License](https://img.shields.io/github/license/DManavi/ddns)](LICENSE)
+
 A self-hosted dynamic DNS server. It wraps several DNS provider APIs behind one
 simplified interface and exposes that through **two interchangeable front-ends**:
 
@@ -1391,11 +1400,16 @@ from `launch.json` and `extensions.json`.
 
 ```bash
 composer test          # PHPUnit
+composer test:coverage # the same, with line coverage — needs pcov or Xdebug
 composer analyse       # PHPStan, level max, no baseline
 composer fmt           # PHP-CS-Fixer, writes
 composer fmt:check     # PHP-CS-Fixer, reports only
-composer check         # all of the above, in the order CI runs them
+composer check         # all of the above except coverage, in the order CI runs them
 ```
+
+`composer check` leaves coverage out on purpose: without a coverage driver
+PHPUnit reports none and writes nothing, and most machines here have neither
+installed. CI has pcov and measures it on every run.
 
 While working on one thing, run one thing:
 
@@ -1408,6 +1422,20 @@ No test touches the network, so the suite runs the same offline and takes about
 a second. CI runs the same checks individually, on PHP 8.2, 8.3 and 8.4 — the
 lower bound is the one that catches portability bugs, so a failure there is
 worth reproducing on 8.2 rather than only on whatever you have installed.
+
+#### The coverage badge
+
+The percentage in the badge at the top is measured by CI and committed to
+`.github/badges/coverage.json`, which [shields.io][endpoint] renders. There is
+no third-party service and no account: a push to `main` measures coverage and
+commits the file when the number moves. It reads `unknown` until the first such
+push, because the figure is measured rather than asserted.
+
+`.github/scripts/coverage-badge.php` does the arithmetic and carries its own
+test cases, which CI runs before trusting it. Percentages are rounded **down**,
+so a badge cannot round 89.96 up and claim a band the code has not reached.
+
+[endpoint]: https://shields.io/badges/endpoint-badge
 
 ### Layout
 
