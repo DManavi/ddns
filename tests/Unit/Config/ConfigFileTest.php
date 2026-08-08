@@ -93,6 +93,33 @@ final class ConfigFileTest extends TestCase
         self::assertStringStartsWith('# ddns configuration', (string) file_get_contents($this->path()));
     }
 
+    /**
+     * A header this class emits is not a comment somebody wrote, because
+     * rewriting emits it again. Warning about it would train people to click
+     * through the warning that does mean something - so every known header has
+     * to be recognised, not just the default one.
+     */
+    #[Test]
+    public function a_header_it_wrote_is_not_a_comment_it_would_lose(): void
+    {
+        foreach ([ConfigFile::HEADER, ConfigFile::SAMPLE_HEADER] as $header) {
+            ConfigFile::write($this->path(), ['hosts' => []], $header);
+
+            self::assertFalse(
+                ConfigFile::hasComments((string) file_get_contents($this->path())),
+                'A generated header was mistaken for the user\'s own comments.',
+            );
+        }
+    }
+
+    #[Test]
+    public function a_comment_somebody_wrote_is_one_it_would_lose(): void
+    {
+        file_put_contents($this->path(), ConfigFile::SAMPLE_HEADER . "\n\n# mine\nhosts: {}\n");
+
+        self::assertTrue(ConfigFile::hasComments((string) file_get_contents($this->path())));
+    }
+
     #[Test]
     public function an_existing_file_is_replaced_atomically(): void
     {

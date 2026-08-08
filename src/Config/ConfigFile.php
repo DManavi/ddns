@@ -26,7 +26,7 @@ final class ConfigFile
     /** @var list<string> */
     private const SECTION_ORDER = ['server', 'providers', 'hosts'];
 
-    private const HEADER = <<<'YAML'
+    public const HEADER = <<<'YAML'
         # ddns configuration
         #
         # Written by `ddns config:init`. Check it with `ddns config:validate`.
@@ -34,6 +34,38 @@ final class ConfigFile
         # ${VAR} placeholders are read from the environment or a .env file at
         # runtime, so a file using them can be committed safely.
         YAML;
+
+    /**
+     * The header on a file written by `config:init --sample`.
+     *
+     * Says what the loosened settings below are for, because the two of them -
+     * trusting private proxies and publishing private addresses - are exactly
+     * what production must not do, and a file that arrives with them already
+     * set should say so where someone reading it will see it.
+     */
+    public const SAMPLE_HEADER = <<<'YAML'
+        # ddns configuration - local development
+        #
+        # Written by `ddns config:init --sample`. Check it with
+        # `ddns config:validate`.
+        #
+        # NOT A PRODUCTION CONFIGURATION. It trusts the private ranges as
+        # proxies and permits publishing private addresses, so that a request
+        # arriving through Docker's bridge behaves like a real one. Both are
+        # wrong on a public deployment; run `ddns config:init` for that.
+        #
+        # The credentials are randomly generated placeholders held in .env. The
+        # provider one is not a real account, so booting, /health and
+        # config:validate work while an actual update is refused upstream.
+        YAML;
+
+    /**
+     * Every header this class emits, so {@see self::hasComments()} can tell one
+     * from a comment somebody wrote.
+     *
+     * @var list<string>
+     */
+    private const HEADERS = [self::HEADER, self::SAMPLE_HEADER];
 
     /**
      * The file exactly as written, with no interpolation and no validation.
@@ -74,27 +106,32 @@ final class ConfigFile
     /**
      * Whether the file carries comments that rewriting would actually lose.
      *
-     * The header this class writes does not count: {@see self::render()} emits
-     * it again, so warning about it would train people to ignore the warning
-     * that matters.
+     * A header this class writes does not count: {@see self::render()} emits it
+     * again, so warning about it would train people to ignore the warning that
+     * matters. Every header is stripped, not just the default one, or a file
+     * from `config:init --sample` would prompt on its own preamble.
      */
     public static function hasComments(string $contents): bool
     {
-        $withoutHeader = str_starts_with($contents, self::HEADER)
-            ? substr($contents, strlen(self::HEADER))
-            : $contents;
+        foreach (self::HEADERS as $header) {
+            if (str_starts_with($contents, $header)) {
+                $contents = substr($contents, strlen($header));
 
-        return preg_match('/^[ \t]*#/m', $withoutHeader) === 1;
+                break;
+            }
+        }
+
+        return preg_match('/^[ \t]*#/m', $contents) === 1;
     }
 
     /**
      * @param array<array-key, mixed> $config
      */
-    public static function render(array $config): string
+    public static function render(array $config, string $header = self::HEADER): string
     {
         // Six levels of nesting before YAML collapses to inline notation is
         // enough for hosts.<name>.types, the deepest structure in the file.
-        return self::HEADER . "\n\n" . Yaml::dump(self::ordered($config), 6, 2, Yaml::DUMP_NULL_AS_TILDE);
+        return $header . "\n\n" . Yaml::dump(self::ordered($config), 6, 2, Yaml::DUMP_NULL_AS_TILDE);
     }
 
     /**
@@ -140,7 +177,7 @@ final class ConfigFile
      *
      * @throws ConfigurationError
      */
-    public static function write(string $path, array $config): void
+    public static function write(string $path, array $config, string $header = self::HEADER): void
     {
         $directory = \dirname($path);
 
@@ -162,7 +199,7 @@ final class ConfigFile
         // world-readable.
         chmod($temporary, self::FILE_MODE);
 
-        if (file_put_contents($temporary, self::render($config)) === false || !rename($temporary, $path)) {
+        if (file_put_contents($temporary, self::render($config, $header)) === false || !rename($temporary, $path)) {
             @unlink($temporary);
 
             throw new ConfigurationError(sprintf('Could not write "%s".', $path));

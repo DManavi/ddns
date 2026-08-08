@@ -222,6 +222,150 @@ final class ConfigInitCommandTest extends ConsoleTestCase
         self::assertFileDoesNotExist($workspace . '/ddns.yaml');
     }
 
+    // ---------------------------------------------------------------- --sample
+
+    /**
+     * The same guarantee the wizard makes, from the path that asks nothing.
+     * This is the one a fresh clone runs, so a file it cannot load would be
+     * the first thing anybody saw of this project.
+     */
+    #[Test]
+    public function sample_writes_a_configuration_that_loads(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $result = $this->sample($workspace);
+
+        self::assertSame(0, $result->exitCode, $result->stdout . $result->stderr);
+        self::assertFileExists($workspace . '/ddns.yaml');
+
+        $configuration = $this->load($workspace);
+        $host = $configuration->host('home');
+
+        self::assertSame('home.example.com', $host->hostname()->fqdn());
+        self::assertSame('digitalocean', $configuration->provider('dev')->driver());
+    }
+
+    /**
+     * A flag whose purpose is to be usable from a script must not be refused
+     * for being scripted. The interactivity guard runs before the interview,
+     * so the order of those two checks is the whole behaviour.
+     */
+    #[Test]
+    public function sample_runs_without_a_terminal(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $result = $this->sample($workspace);
+
+        self::assertSame(0, $result->exitCode);
+        self::assertStringNotContainsString('interactive', $result->stdout);
+    }
+
+    #[Test]
+    public function sample_writes_no_secret_into_the_configuration_file(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $this->sample($workspace);
+
+        $yaml = (string) file_get_contents($workspace . '/ddns.yaml');
+
+        self::assertStringContainsString('${DEV_TOKEN}', $yaml);
+        self::assertStringContainsString('${HOME_TOKEN}', $yaml);
+        self::assertStringNotContainsString($this->envValue($workspace, 'DEV_TOKEN'), $yaml);
+        self::assertStringNotContainsString($this->envValue($workspace, 'HOME_TOKEN'), $yaml);
+    }
+
+    /**
+     * The file this replaced was committed, so its host token authenticated
+     * anyone who had read the repository. Generated credentials are the reason
+     * that is no longer true, which only holds if they really are generated.
+     */
+    #[Test]
+    public function sample_credentials_are_generated_rather_than_published(): void
+    {
+        $first = $this->tempDirectory();
+        $second = $this->tempDirectory();
+
+        $this->sample($first);
+        $this->sample($second);
+
+        foreach (['DEV_TOKEN', 'HOME_TOKEN'] as $variable) {
+            $a = $this->envValue($first, $variable);
+            $b = $this->envValue($second, $variable);
+
+            self::assertNotSame($a, $b, sprintf('Two runs produced the same %s.', $variable));
+            self::assertGreaterThanOrEqual(32, strlen($a));
+        }
+
+        self::assertSame('0600', substr(sprintf('%o', (int) fileperms($first . '/.env')), -4));
+    }
+
+    #[Test]
+    public function sample_never_prints_a_credential(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $result = $this->sample($workspace);
+        $everything = $result->stdout . $result->stderr;
+
+        foreach (['DEV_TOKEN', 'HOME_TOKEN'] as $variable) {
+            self::assertStringNotContainsString($this->envValue($workspace, $variable), $everything);
+        }
+    }
+
+    #[Test]
+    public function sample_says_what_it_loosened(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $result = $this->sample($workspace);
+
+        $yaml = (string) file_get_contents($workspace . '/ddns.yaml');
+
+        // The two settings a production file must not have, and the reason
+        // this one does, in the file rather than only in the terminal that
+        // scrolled away - and in the terminal too, for whoever is watching.
+        self::assertStringContainsString('NOT A PRODUCTION CONFIGURATION', $yaml);
+        self::assertStringContainsString('local development only', self::unwrap($result->stdout));
+        self::assertSame(true, $this->load($workspace)->server()->allowPrivateIps());
+        self::assertNotSame([], $this->load($workspace)->server()->trustedProxies());
+    }
+
+    #[Test]
+    public function sample_refuses_to_overwrite_without_force(): void
+    {
+        $workspace = $this->tempDirectory();
+        file_put_contents($workspace . '/ddns.yaml', "# hand written\n");
+
+        $result = $this->sample($workspace);
+
+        self::assertSame(2, $result->exitCode);
+        self::assertStringContainsString('hand written', (string) file_get_contents($workspace . '/ddns.yaml'));
+    }
+
+    /**
+     * Symfony answers a confirmation nobody can hear with its default, which
+     * here was yes - so a second `--sample` would have replaced a working
+     * credential in `.env` without a word. Keeping what is there is the
+     * recoverable half of that choice.
+     */
+    #[Test]
+    public function sample_does_not_replace_env_values_it_cannot_ask_about(): void
+    {
+        $workspace = $this->tempDirectory();
+
+        $this->sample($workspace);
+        $original = $this->envValue($workspace, 'DEV_TOKEN');
+
+        $result = $this->sample($workspace, ['--force' => true]);
+
+        self::assertSame(0, $result->exitCode, $result->stdout . $result->stderr);
+        self::assertSame($original, $this->envValue($workspace, 'DEV_TOKEN'));
+        self::assertSame($original, $this->load($workspace)->provider('dev')->token());
+    }
+
     #[Test]
     public function driver_specific_fields_are_asked_for(): void
     {
@@ -442,6 +586,23 @@ final class ConfigInitCommandTest extends ConsoleTestCase
             '--config' => $workspace . '/ddns.yaml',
             '--env' => $workspace . '/.env',
         ] + $options, $answers);
+    }
+
+    /**
+     * `--sample`, always non-interactively: ArrayInput is interactive by
+     * default, and a prompt with nothing to answer it would hang the suite.
+     *
+     * @param array<string, mixed> $options
+     */
+    private function sample(string $workspace, array $options = []): ConsoleResult
+    {
+        return $this->runCommand([
+            'command' => 'config:init',
+            '--sample' => true,
+            '--config' => $workspace . '/ddns.yaml',
+            '--env' => $workspace . '/.env',
+            '--no-interaction' => true,
+        ] + $options);
     }
 
     /**

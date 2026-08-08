@@ -17,6 +17,7 @@ use Ddns\Console\SecretPlaceholder;
 use Ddns\Domain\Record\Hostname;
 use Ddns\Domain\Record\RecordType;
 use Ddns\Provider\Azure\AzureZoneKind;
+use Ddns\Provider\DigitalOcean\DigitalOceanProviderFactory;
 use Ddns\Provider\ProviderFactories;
 use Ddns\Provider\ProviderFactory;
 use Ddns\Support\Services;
@@ -53,6 +54,19 @@ final class ConfigInitCommand extends AbstractDdnsCommand
     /** Re-asks allowed for one field before giving up on the input stream. */
     private const MAX_ATTEMPTS = 3;
 
+    /** What `--sample` writes. Short enough to watch a `watch` loop work. */
+    private const SAMPLE_TTL = 60;
+
+    private const SAMPLE_PROVIDER = 'dev';
+
+    private const SAMPLE_HOST = 'home';
+
+    /** Reserved for documentation by RFC 2606, so it can never be someone's. */
+    private const SAMPLE_ZONE = 'example.com';
+
+    /** @var list<string> */
+    private const PRIVATE_RANGES = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'];
+
     /** @var list<SecretPlaceholder> */
     private array $secrets = [];
 
@@ -62,6 +76,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
             ->addOption('config', 'c', InputOption::VALUE_REQUIRED, 'Where to write the file.')
             ->addOption('force', 'f', InputOption::VALUE_NONE, 'Overwrite an existing configuration file.')
             ->addOption('env', null, InputOption::VALUE_REQUIRED, 'Where to write the secrets. Defaults to the .env the application reads.')
+            ->addOption('sample', null, InputOption::VALUE_NONE, 'Skip the questions and write a local development configuration.')
             ->setHelp(<<<'HELP'
                 Asks for a provider account and a first hostname, then writes a
                 configuration file that is ready to use.
@@ -72,15 +87,25 @@ final class ConfigInitCommand extends AbstractDdnsCommand
 
                 The result is validated before it is written, so the file this
                 produces always loads.
+
+                --sample asks nothing and writes a configuration for working on
+                ddns itself: one DigitalOcean account and one host, with random
+                credentials. It trusts the private ranges as proxies and
+                permits private addresses, so a request through Docker's bridge
+                behaves like a real one - neither of which belongs in
+                production.
                 HELP);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
+        $sample = $input->getOption('sample') === true;
 
-        if (!$input->isInteractive()) {
-            $io->error('config:init is interactive. Run it from a terminal, or write the file yourself starting from config/ddns.example.yaml.');
+        // Checked before the interactivity guard: a flag whose whole purpose is
+        // to be usable from a script must not be refused for being scripted.
+        if (!$sample && !$input->isInteractive()) {
+            $io->error('config:init is interactive. Pass --sample for a local development configuration, or write the file yourself starting from config/ddns.example.yaml.');
 
             return self::INVALID;
         }
@@ -94,7 +119,9 @@ final class ConfigInitCommand extends AbstractDdnsCommand
         }
 
         try {
-            return $this->interview($io, $input, $path);
+            return $sample
+                ? $this->sample($io, $input, $path)
+                : $this->interview($io, $input, $path);
         } catch (\RuntimeException $e) {
             // Includes Symfony's own MissingInputException, thrown when the
             // stream ends at a question that has no default.
@@ -103,6 +130,112 @@ final class ConfigInitCommand extends AbstractDdnsCommand
 
             return self::FAILURE;
         }
+    }
+
+    /**
+     * Write a configuration for working on ddns itself, asking nothing.
+     *
+     * Replaces the sample file this repository used to commit. A generated file
+     * is better than a committed one in two ways: there is only ever one
+     * configuration the application might read, and the credentials are not
+     * published - the old file's host token authenticated anyone who had read
+     * the repository.
+     *
+     * @throws \RuntimeException
+     */
+    private function sample(SymfonyStyle $io, InputInterface $input, string $path): int
+    {
+        $io->title('ddns sample configuration');
+        $io->text([
+            'Writing a configuration for local development: one provider account and one hostname.',
+            'See config/ddns.example.yaml for every option.',
+        ]);
+        $io->warning(
+            'For local development only. This file trusts the private ranges as proxies and permits '
+            . 'publishing private addresses, so a request through Docker\'s bridge behaves like a real '
+            . 'one. Both are wrong on a public deployment - run `ddns config:init` for that.',
+        );
+
+        $factory = $this->sampleDriver();
+
+        // Random rather than memorable. The provider credential cannot be a
+        // working one whatever it says, and a value nobody could guess cannot
+        // be mistaken for a real account or left in place by accident.
+        $provider = new SecretPlaceholder(
+            $this->variableName(self::SAMPLE_PROVIDER, 'token'),
+            $this->generateToken(),
+        );
+        $this->secrets[] = $provider;
+
+        $host = new SecretPlaceholder(
+            $this->variableName(self::SAMPLE_HOST, 'token'),
+            $this->generateToken(),
+        );
+        $this->secrets[] = $host;
+
+        $config = [
+            'server' => [
+                'default_ttl' => self::SAMPLE_TTL,
+                // A request from the host reaches the dev container through
+                // Docker's bridge, so it arrives from the gateway rather than
+                // from the real client. Trusting the private ranges is what
+                // makes X-Forwarded-For testable locally.
+                'trusted_proxies' => self::PRIVATE_RANGES,
+                // And locally the caller is almost always a private address,
+                // which the default refuses.
+                'allow_private_ips' => true,
+            ],
+            'providers' => [
+                self::SAMPLE_PROVIDER => [
+                    'driver' => $factory->driver(),
+                    'token' => $provider->reference(),
+                ],
+            ],
+            'hosts' => [
+                self::SAMPLE_HOST => [
+                    'provider' => self::SAMPLE_PROVIDER,
+                    'zone' => self::SAMPLE_ZONE,
+                    'name' => self::SAMPLE_HOST,
+                    'types' => [RecordType::A->value],
+                    'ttl' => self::SAMPLE_TTL,
+                    'token' => $host->reference(),
+                ],
+            ],
+        ];
+
+        $problem = $this->validate($config);
+
+        if ($problem !== null) {
+            $io->error($problem);
+            $io->note('Nothing was written. This is a bug in the sample generator - please report it.');
+
+            return self::FAILURE;
+        }
+
+        return $this->save($io, $input, $path, $config, ConfigFile::SAMPLE_HEADER, [
+            'ddns config:validate     check the file loads',
+            'docker compose -f compose.dev.yaml up',
+            'The host token is in .env; it is never printed here.',
+        ]);
+    }
+
+    /**
+     * The driver the sample is written against.
+     *
+     * Read from the factory rather than spelled out, so renaming a driver
+     * cannot leave this command producing a file the loader then rejects.
+     *
+     * @throws \RuntimeException when this build has no such driver
+     */
+    private function sampleDriver(): ProviderFactory
+    {
+        foreach ($this->service(ProviderFactories::class)->all() as $factory) {
+            if ($factory instanceof DigitalOceanProviderFactory) {
+                return $factory;
+            }
+        }
+
+        throw new \RuntimeException('This build has no DigitalOcean driver, so there is nothing to write a sample against.');
     }
 
     /**
@@ -421,8 +554,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
 
         // Generated rather than asked for: this is a secret the user has no
         // reason to choose, and one they would otherwise pick badly.
-        $token = bin2hex(random_bytes(self::TOKEN_BYTES));
-        $secret = new SecretPlaceholder($this->variableName($key, 'token'), $token);
+        $secret = new SecretPlaceholder($this->variableName($key, 'token'), $this->generateToken());
         $this->secrets[] = $secret;
 
         return [
@@ -482,16 +614,39 @@ final class ConfigInitCommand extends AbstractDdnsCommand
     }
 
     /**
-     * @param array<string, mixed> $config
+     * A secret nobody has a reason to choose.
      */
-    private function save(SymfonyStyle $io, InputInterface $input, string $path, array $config): int
+    private function generateToken(): string
     {
+        return bin2hex(random_bytes(self::TOKEN_BYTES));
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     * @param list<string>         $nextSteps
+     */
+    private function save(
+        SymfonyStyle $io,
+        InputInterface $input,
+        string $path,
+        array $config,
+        string $header = ConfigFile::HEADER,
+        array $nextSteps = [
+            'ddns config:validate      check the file loads',
+            'ddns update --all         set the records now',
+            'ddns watch --all          keep them in sync',
+        ],
+    ): int {
         $envPath = $this->envPath($input);
 
         try {
-            $result = EnvFileWriter::apply($envPath, $this->secretValues(), $this->confirmReplacements($io, $envPath));
+            $result = EnvFileWriter::apply(
+                $envPath,
+                $this->secretValues(),
+                $this->confirmReplacements($io, $input, $envPath),
+            );
 
-            ConfigFile::write($path, $config);
+            ConfigFile::write($path, $config, $header);
         } catch (ConfigurationError $e) {
             $io->error($e->getMessage());
 
@@ -505,6 +660,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
         foreach ([
             'written' => 'Secrets written to %s: %s',
             'replaced' => 'Secrets replaced in %s: %s',
+            'kept' => 'Secrets already in %s, left alone: %s',
         ] as $key => $template) {
             if ($result[$key] !== []) {
                 $io->text(sprintf($template, $envPath, implode(', ', $result[$key])));
@@ -512,11 +668,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
         }
 
         $io->section('Next steps');
-        $io->listing([
-            'ddns config:validate      check the file loads',
-            'ddns update --all         set the records now',
-            'ddns watch --all          keep them in sync',
-        ]);
+        $io->listing($nextSteps);
 
         return self::SUCCESS;
     }
@@ -586,7 +738,7 @@ final class ConfigInitCommand extends AbstractDdnsCommand
      *
      * @return list<string>
      */
-    private function confirmReplacements(SymfonyStyle $io, string $envPath): array
+    private function confirmReplacements(SymfonyStyle $io, InputInterface $input, string $envPath): array
     {
         $existing = EnvFileWriter::read($envPath);
         $conflicts = [];
@@ -606,6 +758,16 @@ final class ConfigInitCommand extends AbstractDdnsCommand
             $envPath,
             implode(', ', $conflicts),
         ));
+
+        // `--sample` runs with nobody to ask, and Symfony answers an unasked
+        // confirmation with its default - which here would overwrite a working
+        // credential silently. Keeping what is there is the recoverable half of
+        // that choice: `--force` and an edit still get you the other one.
+        if (!$input->isInteractive()) {
+            $io->note('Nothing to answer the question, so the existing values are kept.');
+
+            return [];
+        }
 
         return $io->confirm('Replace them with the values just entered?', true) ? $conflicts : [];
     }
