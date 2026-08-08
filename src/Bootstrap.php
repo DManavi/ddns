@@ -119,6 +119,18 @@ final class Bootstrap
     }
 
     /**
+     * The path the configuration would be read from, whether or not it exists.
+     *
+     * Unlike {@see discoverConfigPath()} this never throws, because "there is
+     * no file" is not an answer to "where should the file go?" - which is
+     * precisely the question being asked when there is none.
+     */
+    public static function intendedConfigPath(): string
+    {
+        return self::configPathFromEnvironment() ?? self::projectRoot() . '/' . self::DEFAULT_CONFIG_PATH;
+    }
+
+    /**
      * `DDNS_CONFIG`, wherever it was set.
      *
      * Reads the superglobals as well as `getenv()`, because phpdotenv v5 loads

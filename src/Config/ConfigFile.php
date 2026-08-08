@@ -125,6 +125,26 @@ final class ConfigFile
     }
 
     /**
+     * The header this file already carries, so rewriting it keeps it.
+     *
+     * `config:set` and the `hosts:*` commands rewrite the whole file, and
+     * emitting the default header regardless would quietly swap the sample's
+     * "not a production configuration" warning for a neutral one - silently,
+     * because {@see self::hasComments()} correctly does not count a generated
+     * header as a comment worth confirming the loss of.
+     */
+    public static function headerOf(string $contents): string
+    {
+        foreach (self::HEADERS as $header) {
+            if (str_starts_with($contents, $header)) {
+                return $header;
+            }
+        }
+
+        return self::HEADER;
+    }
+
+    /**
      * @param array<array-key, mixed> $config
      */
     public static function render(array $config, string $header = self::HEADER): string

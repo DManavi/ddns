@@ -4,11 +4,20 @@ declare(strict_types=1);
 
 namespace Ddns\Tests\Integration;
 
+use Ddns\Bootstrap;
 use Ddns\Config\ConfigFile;
+use Ddns\Config\Exception\ConfigurationError;
+use Ddns\Console\ConsoleApplicationFactory;
 use Ddns\Tests\Support\ConsoleResult;
+use Ddns\Tests\Support\SplitOutput;
+use DI\ContainerBuilder;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
+use Psr\Log\LoggerInterface;
+use Psr\Log\NullLogger;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\OutputInterface;
 
 /**
  * The `config:*` management commands.
@@ -70,6 +79,47 @@ final class ConfigManagementCommandTest extends ConsoleTestCase
         self::assertFalse($this->at($payload, 'exists'));
     }
 
+    /**
+     * The same promise, but reached the way a real invocation reaches it.
+     *
+     * The test above names a file that does not exist, which binds `config.path`
+     * to a string and never runs discovery at all - so it passed throughout a
+     * period when `ddns config:path` on a project with no configuration exited
+     * 2 and printed nothing for `$EDITOR` to open. Here the binding is the
+     * factory `Bootstrap::container()` installs, so resolving it fails exactly
+     * as it does in production.
+     */
+    #[Test]
+    public function config_path_answers_when_discovery_itself_finds_nothing(): void
+    {
+        $builder = new ContainerBuilder();
+        $builder->useAutowiring(true);
+
+        /** @var array<string, mixed> $definitions */
+        $definitions = require Bootstrap::projectRoot() . '/config/container.php';
+
+        $builder->addDefinitions($definitions);
+        $builder->addDefinitions([
+            'config.path' => \DI\factory(static function (): string {
+                throw ConfigurationError::notFound(['/nowhere/config/ddns.yaml']);
+            }),
+            LoggerInterface::class => new NullLogger(),
+        ]);
+
+        $application = ConsoleApplicationFactory::create($builder->build());
+        $application->setAutoExit(false);
+        $application->setCatchExceptions(false);
+
+        $output = new SplitOutput(OutputInterface::VERBOSITY_NORMAL);
+        $exitCode = $application->run(new ArrayInput([
+            'command' => 'config:path',
+            '--no-interaction' => true,
+        ]), $output);
+
+        self::assertSame(0, $exitCode, $output->stdout() . $output->stderr());
+        self::assertSame(Bootstrap::intendedConfigPath(), trim($output->stdout()));
+    }
+
     #[Test]
     public function config_path_prints_the_bare_path_so_it_composes(): void
     {
@@ -89,6 +139,82 @@ final class ConfigManagementCommandTest extends ConsoleTestCase
 
         self::assertTrue($this->at($payload, 'exists'));
         self::assertTrue($this->at($payload, 'readable'));
+    }
+
+    /**
+     * A configuration written by `config:init --sample` says it is not a
+     * production one. `config:set` rewrites the whole file, so without this it
+     * emitted the neutral header instead - and did so silently, because a
+     * generated header is deliberately not counted as a comment worth
+     * confirming the loss of. The warning simply disappeared on the first edit.
+     */
+    #[Test]
+    public function rewriting_a_sample_configuration_keeps_its_warning(): void
+    {
+        $workspace = $this->tempDirectory();
+        $path = $workspace . '/ddns.yaml';
+
+        ConfigFile::write($path, [
+            'server' => ['default_ttl' => 60],
+            'providers' => ['dev' => ['driver' => 'digitalocean', 'token' => 'sample-token-0123456789']],
+            'hosts' => ['home' => [
+                'provider' => 'dev',
+                'zone' => 'example.com',
+                'name' => 'home',
+                'types' => ['A'],
+                'ttl' => 60,
+                'token' => 'host-token-0123456789abcdef',
+            ]],
+        ], ConfigFile::SAMPLE_HEADER);
+
+        $result = $this->runCommand([
+            'command' => 'config:set',
+            'key' => 'server.default_ttl',
+            'value' => '120',
+            '--no-interaction' => true,
+        ], '', 32, $path);
+
+        self::assertSame(0, $result->exitCode, $result->stdout . $result->stderr);
+
+        $after = (string) file_get_contents($path);
+
+        self::assertStringContainsString('NOT A PRODUCTION CONFIGURATION', $after);
+        self::assertStringStartsWith(ConfigFile::SAMPLE_HEADER, $after);
+        self::assertSame(120, $this->at(ConfigFile::read($path), 'server.default_ttl'));
+    }
+
+    #[Test]
+    public function rewriting_an_ordinary_configuration_keeps_the_ordinary_header(): void
+    {
+        $workspace = $this->tempDirectory();
+        $path = $workspace . '/ddns.yaml';
+
+        ConfigFile::write($path, [
+            'server' => ['default_ttl' => 60],
+            'providers' => ['p1' => ['driver' => 'digitalocean', 'token' => 'provider-secret']],
+            'hosts' => ['home' => [
+                'provider' => 'p1',
+                'zone' => 'example.com',
+                'name' => 'home',
+                'types' => ['A'],
+                'ttl' => 60,
+                'token' => 'host-token-0123456789abcdef',
+            ]],
+        ]);
+
+        $result = $this->runCommand([
+            'command' => 'config:set',
+            'key' => 'server.default_ttl',
+            'value' => '120',
+            '--no-interaction' => true,
+        ], '', 32, $path);
+
+        self::assertSame(0, $result->exitCode, $result->stdout . $result->stderr);
+
+        $after = (string) file_get_contents($path);
+
+        self::assertStringStartsWith(ConfigFile::HEADER, $after);
+        self::assertStringNotContainsString('NOT A PRODUCTION CONFIGURATION', $after);
     }
 
     #[Test]

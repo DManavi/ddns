@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Ddns\Console\Command;
 
+use Ddns\Bootstrap;
+use Ddns\Config\Exception\ConfigurationError;
 use Ddns\Console\AbstractDdnsCommand;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
@@ -12,10 +14,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * Reports which configuration file is actually in use.
  *
- * Four locations are searched and two environment variables can override the
- * result, so "which file am I editing?" is a real question - particularly
- * under a web server, where the answer depends on the process rather than the
- * shell.
+ * `DDNS_CONFIG` can move it and `--config` can override that, so "which file
+ * am I editing?" is a real question - particularly under a web server, where
+ * the answer depends on the process rather than on the shell.
  */
 #[AsCommand(
     name: 'config:path',
@@ -30,9 +31,7 @@ final class ConfigPathCommand extends AbstractDdnsCommand
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        // Resolving the path is enough; the file's contents are not needed and
-        // an invalid file should not stop this from answering.
-        $path = $this->configPath();
+        $path = $this->pathInUse();
 
         if ($this->wantsJson($input)) {
             $this->json($output)->document([
@@ -49,5 +48,24 @@ final class ConfigPathCommand extends AbstractDdnsCommand
         $output->writeln($path);
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Where the configuration is, or would be.
+     *
+     * Resolving the path does not read the file, so this answers even when the
+     * contents are broken. It also answers when there is no file at all, which
+     * every other command treats as fatal: here the missing file is the thing
+     * being asked about, and `exists` below is only meaningful if it can be
+     * false. Without this, the documented `$EDITOR "$(ddns config:path)"` had
+     * nothing to open on the one occasion you would reach for it.
+     */
+    private function pathInUse(): string
+    {
+        try {
+            return $this->configPath();
+        } catch (ConfigurationError) {
+            return Bootstrap::intendedConfigPath();
+        }
     }
 }

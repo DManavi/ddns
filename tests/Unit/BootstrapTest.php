@@ -193,4 +193,28 @@ final class BootstrapTest extends TestCase
 
         self::assertSame('/tmp/padded.yaml', Bootstrap::configPathFromEnvironment());
     }
+
+    /**
+     * Where the file would go, asked of a project that has none.
+     *
+     * `discoverConfigPath()` throws in that situation, which is right for
+     * everything that needs to read the file and wrong for `config:path`,
+     * whose whole job is to answer where it should be written.
+     */
+    #[Test]
+    public function the_intended_path_is_answerable_with_no_file_present(): void
+    {
+        self::assertSame(
+            Bootstrap::projectRoot() . '/config/ddns.yaml',
+            Bootstrap::intendedConfigPath(),
+        );
+    }
+
+    #[Test]
+    public function the_intended_path_honours_the_environment(): void
+    {
+        $_ENV['DDNS_CONFIG'] = '/etc/ddns/elsewhere.yaml';
+
+        self::assertSame('/etc/ddns/elsewhere.yaml', Bootstrap::intendedConfigPath());
+    }
 }

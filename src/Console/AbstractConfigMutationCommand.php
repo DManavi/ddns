@@ -165,6 +165,17 @@ abstract class AbstractConfigMutationCommand extends AbstractDdnsCommand
             EnvFileWriter::apply($this->envPath(), $secrets, $replace);
         }
 
-        ConfigFile::write($this->configPath(), $config);
+        $path = $this->configPath();
+
+        // Keep whichever header the file already had. A configuration written
+        // by `config:init --sample` says it is not a production one, and that
+        // warning surviving an edit matters more than the file being uniform:
+        // losing it here would be silent, since a generated header is not a
+        // comment the confirmation prompt asks about.
+        $header = is_file($path)
+            ? ConfigFile::headerOf((string) file_get_contents($path))
+            : ConfigFile::HEADER;
+
+        ConfigFile::write($path, $config, $header);
     }
 }

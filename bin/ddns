@@ -46,7 +46,7 @@ try {
         'config',
         'c',
         InputOption::VALUE_REQUIRED,
-        'Path to the configuration file. Defaults to $DDNS_CONFIG, then ./ddns.yaml.',
+        'Path to the configuration file. Defaults to $DDNS_CONFIG, then ./config/ddns.yaml.',
     ));
 
     exit($application->run($input, $output));
