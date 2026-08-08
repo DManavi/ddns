@@ -1,0 +1,430 @@
+# Release.
+#
+# Publishes a version to Packagist and to two container registries when a pull
+# request is merged into main, and on request for a hand-made patch.
+#
+# ---------------------------------------------------------------------------
+# CURRENTLY DISABLED. Every job is gated on the repository variable
+# RELEASE_ENABLED, which does not exist yet, so nothing here runs and nothing
+# is published. Turn it on under Settings -> Secrets and variables -> Actions
+# -> Variables, with RELEASE_ENABLED set to true, once the accounts exist.
+# ---------------------------------------------------------------------------
+#
+# What it wants before it will do anything useful:
+#
+#   RELEASE_ENABLED     variable   `true`, or every job skips
+#   DOCKERHUB_USERNAME  secret     omit to publish only to GHCR
+#   DOCKERHUB_TOKEN     secret     an access token, not the account password
+#   PACKAGIST_USERNAME  secret     omit to rely on Packagist's GitHub App
+#   PACKAGIST_TOKEN     secret     from https://packagist.org/profile/
+#
+# The Docker Hub and Packagist steps skip themselves when their secrets are
+# absent, so turning the variable on with none of them set still publishes to
+# ghcr.io, which needs no credentials of its own.
+#
+# How the version is decided:
+#
+#   merged pull request   the highest bump its title and its commits ask for,
+#                         by Conventional Commits - a `!` or a BREAKING CHANGE
+#                         footer is major, `feat` is minor, `fix` and friends
+#                         are patch, and a request made only of docs, chore,
+#                         ci, style or test publishes nothing at all
+#   workflow_dispatch     always a patch
+#
+# Both the title and the commits are read because either may be the one that
+# survives: a squash merge keeps the title, a merge commit keeps the commits.
+#
+# The rules live in .github/scripts/next-version.php, which carries its own
+# test cases and is made to prove them below before it is trusted.
+
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only by default; the one job that writes says so itself.
+permissions:
+  contents: read
+
+# One release at a time, and never cancelled: a run interrupted between the
+# tag and the push would leave a version that exists in git and nowhere else.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Decide the version
+    runs-on: ubuntu-latest
+
+    # `pull_request: closed` fires on every close, merged or not. Only a merge
+    # is a release.
+    if: >-
+      vars.RELEASE_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true)
+
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+      previous: ${{ steps.version.outputs.previous }}
+      bump: ${{ steps.version.outputs.bump }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are where the previous version is read from, and a shallow
+          # clone has none of them.
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      # The script decides what gets published, so it proves itself first. It
+      # lives outside src/, where neither PHPStan nor the test suite reaches
+      # it - the containerised toolchain runs against a tree with no .github
+      # in it, so adding it to their paths would break `composer check` there.
+      - name: Test the version rules
+        run: php .github/scripts/next-version.php --self-test
+
+      # The newest release tag, falling back to the constant the application
+      # reports, for the first release when no tag exists yet.
+      - name: Find the current version
+        id: current
+        run: |
+          set -euo pipefail
+
+          # Version-aware sorting, so v10 beats v9 rather than losing to it
+          # alphabetically. The grep is what the glob cannot express: only a
+          # bare MAJOR.MINOR.PATCH counts, so a prerelease or a nightly tag
+          # sitting in the same repository is not mistaken for the last
+          # release.
+          tag="$(git tag --list 'v[0-9]*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | head -n 1 || true)"
+
+          if [ -n "$tag" ]; then
+            current="${tag#v}"
+            echo "Latest release tag: $tag"
+          else
+            current="$(php -r 'require "src/Bootstrap.php"; echo Ddns\Bootstrap::VERSION;')"
+            echo "No release tag yet, so starting from Bootstrap::VERSION: $current"
+          fi
+
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      # One `gh pr view`, so the title and the commits come from the same
+      # place. Written to a file rather than passed as an argument: a pull
+      # request title is attacker-controlled text and has no business being
+      # expanded into a shell command.
+      - name: Collect what the pull request says it changed
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr view "$PR" --json title,commits > "$RUNNER_TEMP/pr.json"
+
+      - name: Work out the next version
+        id: version
+        env:
+          CURRENT: ${{ steps.current.outputs.current }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            php .github/scripts/next-version.php \
+              --current="$CURRENT" \
+              --event=workflow_dispatch | tee -a "$GITHUB_OUTPUT"
+          else
+            php .github/scripts/next-version.php \
+              --current="$CURRENT" \
+              --event=pull_request \
+              --pr-json="$RUNNER_TEMP/pr.json" | tee -a "$GITHUB_OUTPUT"
+          fi
+
+      - name: Say what will happen
+        env:
+          RELEASE: ${{ steps.version.outputs.release }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          BUMP: ${{ steps.version.outputs.bump }}
+        run: |
+          set -euo pipefail
+
+          if [ "$RELEASE" = "true" ]; then
+            {
+              echo "### Releasing \`$VERSION\`"
+              echo
+              echo "A \`$BUMP\` bump from \`$PREVIOUS\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### No release"
+              echo
+              echo "Nothing here changes what anyone can install, so \`$PREVIOUS\` stands."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  tag:
+    name: Tag and release
+    runs-on: ubuntu-latest
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+
+    permissions:
+      # To push the version bump and the tag that points at it.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The branch, not the merge commit a pull_request event checks out,
+          # because this job pushes.
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, curl, xml, pcntl
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        uses: ramsey/composer-install@v3
+        with:
+          composer-options: "--prefer-dist"
+
+      # Bootstrap::VERSION is what `ddns --version` and the OpenAPI document
+      # report, so a tag it disagreed with would leave the running application
+      # lying about which release it is. The value is a semver this workflow
+      # computed, so it is safe to substitute; the read-back is what catches a
+      # replacement that silently matched nothing.
+      - name: Set the version the application reports
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          matches="$(grep -c "public const VERSION = '" src/Bootstrap.php || true)"
+          test "$matches" = "1" || {
+            echo "Expected exactly one VERSION constant in src/Bootstrap.php, found $matches." >&2
+            echo "The constant was probably renamed; this workflow needs updating with it." >&2
+            exit 1
+          }
+
+          sed -i "s/public const VERSION = '[^']*';/public const VERSION = '${VERSION}';/" src/Bootstrap.php
+
+          actual="$(php -r 'require "src/Bootstrap.php"; echo Ddns\Bootstrap::VERSION;')"
+          test "$actual" = "$VERSION" || {
+            echo "Bootstrap::VERSION is $actual, expected $VERSION." >&2
+            exit 1
+          }
+
+      # The version is compiled into the OpenAPI document and the console
+      # banner, so the suite runs against the value being tagged rather than
+      # the one that was tested on the pull request.
+      - name: Test at the version being released
+        run: vendor/bin/phpunit
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          # Already at the right version if someone bumped it by hand, and that
+          # is not a reason to fail the release. [skip ci] is belt and braces:
+          # a push made with GITHUB_TOKEN does not start another workflow.
+          if git diff --quiet -- src/Bootstrap.php; then
+            echo "Bootstrap::VERSION already reads $VERSION; nothing to commit."
+          else
+            git commit -m "chore(release): v${VERSION} [skip ci]" -- src/Bootstrap.php
+          fi
+
+          # Annotated, because Packagist and `git describe` both prefer one.
+          git tag -a "v${VERSION}" -m "v${VERSION}"
+          git push origin main --follow-tags
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            --verify-tag
+
+  docker:
+    name: Publish the image
+    runs-on: ubuntu-latest
+    needs: [plan, tag]
+    if: needs.plan.outputs.release == 'true'
+
+    permissions:
+      contents: read
+      # To push to ghcr.io under this repository's owner.
+      packages: write
+
+    # The `secrets` context cannot be used in an `if:`, but it can be used
+    # here, and `env` can. This is the usual way to make a step conditional on
+    # a credential existing.
+    env:
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, so the image is built from exactly what was released -
+          # including the version constant the previous job wrote.
+          ref: v${{ needs.plan.outputs.version }}
+
+      # arm64 is emulated, which is slower than the native build and is what
+      # makes the image usable on a Raspberry Pi - where a good deal of
+      # self-hosted dynamic DNS actually runs.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ghcr.io always; Docker Hub only when there is an account to push to.
+      # Lowercased, because a repository owner may be capitalised and a
+      # registry reference may not be.
+      - name: Work out the image names
+        id: images
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          slug="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          # A multi-line output needs the delimiter form; a bare newline would
+          # be read as the end of the value.
+          {
+            echo 'names<<IMAGES'
+            echo "ghcr.io/${slug}"
+            if [ "$HAS_DOCKERHUB" = "true" ]; then
+              echo "${slug}"
+            fi
+            echo 'IMAGES'
+          } >> "$GITHUB_OUTPUT"
+
+      # 1.2.3, 1.2 and 1 all move to the newest release that matches, so a
+      # deployment can choose how much change it is willing to accept.
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.images.outputs.names }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.plan.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.plan.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.plan.outputs.version }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=ddns
+            org.opencontainers.image.description=Self-hosted dynamic DNS server
+            org.opencontainers.image.version=${{ needs.plan.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+
+      # `dev` is the last stage in the Dockerfile, so the target has to be
+      # named explicitly or this would publish the development image.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Say where it went
+        run: |
+          {
+            echo "### Image"
+            echo
+            echo '```'
+            printf '%s\n' '${{ steps.meta.outputs.tags }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  packagist:
+    name: Publish to Packagist
+    runs-on: ubuntu-latest
+    needs: [plan, tag]
+    if: needs.plan.outputs.release == 'true'
+
+    env:
+      HAS_PACKAGIST: ${{ secrets.PACKAGIST_USERNAME != '' }}
+
+    steps:
+      # Packagist reads the tag from GitHub itself, so this only tells it to
+      # look now rather than whenever it next gets round to it. With the
+      # Packagist GitHub App installed the hook already fires and this is a
+      # harmless second nudge - which is why it skips, rather than fails, when
+      # there are no credentials for it.
+      #
+      # There is deliberately no `version` field in composer.json: Packagist
+      # derives the version from the tag, and a field that disagreed with the
+      # tag would be believed over it.
+      - name: Ask Packagist to update
+        if: env.HAS_PACKAGIST == 'true'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          status="$(curl -sS -o /tmp/packagist.json -w '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            --data "{\"repository\":{\"url\":\"https://github.com/${REPOSITORY}\"}}" \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}")"
+
+          cat /tmp/packagist.json
+          echo
+
+          test "$status" = "202" || {
+            echo "Packagist answered $status." >&2
+            exit 1
+          }
+
+      - name: Say why nothing happened
+        if: env.HAS_PACKAGIST != 'true'
+        run: |
+          {
+            echo "### Packagist"
+            echo
+            echo "No PACKAGIST_USERNAME is set, so nothing was pushed."
+            echo "Packagist picks the tag up on its own when its GitHub App is installed."
+          } >> "$GITHUB_STEP_SUMMARY"

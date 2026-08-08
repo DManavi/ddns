@@ -1445,6 +1445,60 @@ keeps the same use case usable from both front-ends.
 Upsert semantics, no-change detection and dual-stack handling are already done
 for you.
 
+### Releases
+
+**Currently switched off.** `.github/workflows/release.yml` is committed and
+complete, but every job is gated on a repository variable that does not exist,
+so nothing publishes. Set `RELEASE_ENABLED` to `true` under *Settings → Secrets
+and variables → Actions → Variables* to turn it on.
+
+A merged pull request is released at the highest version its
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) ask for.
+Both the title and the individual commits are read, because either may be the
+one that survives — a squash merge keeps the title, a merge commit keeps the
+commits.
+
+| In the title or any commit | Bump |
+| --- | --- |
+| `!` before the colon, or a `BREAKING CHANGE:` footer | major |
+| `feat` | minor |
+| `fix`, `perf`, `refactor`, `build`, `revert`, or a type it does not recognise | patch |
+| only `docs`, `chore`, `ci`, `style`, `test` | **no release** |
+
+A hand-run release — *Actions → Release → Run workflow* — is always a patch.
+There are no commits to read an intention from, and inventing a larger bump
+from silence would be worse than the smallest one that ships.
+
+The rules live in `.github/scripts/next-version.php`. It sits outside `src/`,
+where PHPStan and PHPUnit cannot reach it, so it carries its own cases and
+`composer check`'s CI equivalent runs `--self-test` on every pull request —
+otherwise the logic would go unexercised until the first release depended on it.
+
+What a release does, in order:
+
+1. Rewrites `Bootstrap::VERSION`, reads it back through PHP to prove the edit
+   landed, and runs the suite at that value.
+2. Commits it to `main` and pushes an annotated `v<version>` tag.
+3. Creates the GitHub release with generated notes.
+4. Pushes `linux/amd64` and `linux/arm64` images to `ghcr.io` and, if the
+   credentials exist, Docker Hub — tagged `1.2.3`, `1.2`, `1` and `latest`.
+5. Asks Packagist to update.
+
+Optional secrets, each of which only makes its own step do something:
+
+| Secret | Without it |
+| --- | --- |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | publishes to `ghcr.io` only |
+| `PACKAGIST_USERNAME`, `PACKAGIST_TOKEN` | relies on Packagist's GitHub App to notice the tag |
+
+`composer.json` deliberately has **no `version` field**: Packagist derives the
+version from the tag, and a field that disagreed with the tag would be believed
+over it.
+
+Pushing to `main` needs `contents: write`, which the workflow grants only to the
+job that tags. If you later protect `main`, that job needs an exemption or the
+release will fail at the push.
+
 ## Not implemented
 
 - RFC 2136 DNS UPDATE and the dyndns2 de-facto protocol.

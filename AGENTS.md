@@ -222,9 +222,30 @@ Write the subject as what changed from the user's point of view, and use the
 body to explain **why** — the constraint, the bug, the thing that turned out not
 to be true. `git log` here is written to be read later; match it.
 
+**The type is load-bearing.** It picks the version: `!` or a `BREAKING CHANGE:`
+footer is a major, `feat` a minor, `fix` and friends a patch, and a pull request
+made only of `docs`, `chore`, `ci`, `style` or `test` publishes nothing. Both the
+pull request title and its commits are read, so whichever survives the merge
+carries the intent. Mislabelling `feat` as `chore` does not just read wrong, it
+withholds a release. The rules are in `.github/scripts/next-version.php`, which
+carries its own cases; run `php .github/scripts/next-version.php --self-test`
+after touching it.
+
 CI runs five jobs: PHP 8.2, 8.3 and 8.4 (validate, audit, format, analyse, test,
-plus a config-validation smoke test), a Docker image build, and a Compose file
-check. `composer check` locally covers the first three.
+a config-validation smoke test, and the release rules' self-test), a Docker
+image build, and a Compose file check. `composer check` locally covers the
+formatting, analysis and test steps.
+
+The release workflow is committed but **switched off**: every job is gated on a
+`RELEASE_ENABLED` repository variable that does not exist yet. It publishes to
+ghcr.io, Docker Hub and Packagist, and rewrites `Bootstrap::VERSION` before
+tagging — so if you rename that constant, `.github/workflows/release.yml` has to
+change with it. CI checks the constant is still in the shape the release
+rewrites, rather than letting a release be where that is discovered.
+
+Neither workflow file is covered by the PHP toolchain. `actionlint` with
+`shellcheck` is what catches mistakes in them; both are worth running by hand
+after an edit, since nothing in CI does it for you.
 
 For the authoritative state of a CI run use `gh run list` and `gh run watch`.
 The GitHub status page has lagged reality by more than thirty minutes.

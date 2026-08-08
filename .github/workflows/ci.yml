@@ -70,6 +70,27 @@ jobs:
           HOME_TOKEN=ci-placeholder-host-token \
           php bin/ddns config:validate /tmp/ddns.yaml
 
+      # The release workflow is gated off until there are accounts to publish
+      # to, so nothing else would exercise the rules that decide a version
+      # until the day they are first trusted with one. They sit outside src/,
+      # where PHPStan and PHPUnit cannot reach them, and carry their own cases
+      # instead.
+      - name: Test the release version rules
+        run: php .github/scripts/next-version.php --self-test
+
+      # The release workflow rewrites this constant with sed before tagging.
+      # Renaming it would leave the released application reporting the previous
+      # version, so the shape it matches on is checked here rather than
+      # discovered during a release.
+      - name: Confirm the version constant is where the release expects it
+        run: |
+          matches="$(grep -c "public const VERSION = '" src/Bootstrap.php || true)"
+          test "$matches" = "1" || {
+            echo "Expected exactly one VERSION constant, found $matches." >&2
+            echo "See .github/workflows/release.yml, which rewrites it." >&2
+            exit 1
+          }
+
   docker:
     name: Docker images
     runs-on: ubuntu-latest
