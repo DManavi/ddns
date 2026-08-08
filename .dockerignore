@@ -7,11 +7,7 @@
 .env
 .env.*
 !.env.example
-ddns.yaml
-ddns.yml
-ddns.dev.yaml
 config/ddns.yaml
-config/ddns.yml
 
 # Installed by the build itself; a host copy would be the wrong platform
 vendor/

@@ -14,8 +14,6 @@ final class BootstrapTest extends TestCase
 {
     private string|false $savedProcess = false;
 
-    private string|false $savedFallback = false;
-
     private ?string $savedEnv = null;
 
     private ?string $savedServer = null;
@@ -24,7 +22,6 @@ final class BootstrapTest extends TestCase
     {
         // DDNS_CONFIG is process-wide, so it is put back afterwards rather
         // than left set for whatever runs next.
-        $this->savedFallback = getenv('DDNS_CONFIG_FALLBACK');
         $this->savedProcess = getenv('DDNS_CONFIG');
         $this->savedEnv = is_string($_ENV['DDNS_CONFIG'] ?? null) ? $_ENV['DDNS_CONFIG'] : null;
         $this->savedServer = is_string($_SERVER['DDNS_CONFIG'] ?? null) ? $_SERVER['DDNS_CONFIG'] : null;
@@ -47,39 +44,35 @@ final class BootstrapTest extends TestCase
         if (is_string($this->savedProcess)) {
             putenv('DDNS_CONFIG=' . $this->savedProcess);
         }
-
-        if (is_string($this->savedFallback)) {
-            putenv('DDNS_CONFIG_FALLBACK=' . $this->savedFallback);
-        }
     }
 
     private function clear(): void
     {
         putenv('DDNS_CONFIG');
-        putenv('DDNS_CONFIG_FALLBACK');
-        unset(
-            $_ENV['DDNS_CONFIG'],
-            $_SERVER['DDNS_CONFIG'],
-            $_ENV['DDNS_CONFIG_FALLBACK'],
-            $_SERVER['DDNS_CONFIG_FALLBACK'],
+        unset($_ENV['DDNS_CONFIG'], $_SERVER['DDNS_CONFIG']);
+    }
+
+    /**
+     * One file, or none. The list used to run to four paths with a fifth
+     * environment-driven fallback behind them, so "which file is this actually
+     * reading?" had five possible answers and the server could quietly answer
+     * from a sample nobody had chosen.
+     */
+    #[Test]
+    public function exactly_one_path_is_searched(): void
+    {
+        self::assertSame(
+            [Bootstrap::projectRoot() . '/config/ddns.yaml'],
+            Bootstrap::configCandidates(),
         );
     }
 
     #[Test]
-    public function the_configuration_is_looked_for_in_the_config_directory_first(): void
+    public function the_configuration_is_looked_for_in_the_config_directory(): void
     {
         // It has to match where config:init writes and where the image expects
         // the file mounted, or the wizard writes somewhere nothing reads.
-        $candidates = Bootstrap::configCandidates();
-
-        self::assertSame(Bootstrap::projectRoot() . '/config/ddns.yaml', $candidates[0] ?? null);
         self::assertSame('config/ddns.yaml', Bootstrap::DEFAULT_CONFIG_PATH);
-    }
-
-    #[Test]
-    public function the_project_root_is_still_searched_for_older_installations(): void
-    {
-        self::assertContains(Bootstrap::projectRoot() . '/ddns.yaml', Bootstrap::configCandidates());
     }
 
     #[Test]
@@ -115,13 +108,43 @@ final class BootstrapTest extends TestCase
     }
 
     /**
-     * The editor profiles used to pin DDNS_CONFIG at the committed sample, so
-     * pressing play served a different file - and a different host token -
-     * from the one `config:init` had just written, with nothing to say so.
-     * They now use the same discovery as everything else.
+     * No configuration, no application. Nothing stands in for the file: an
+     * application answering from something nobody chose - once, a committed
+     * sample whose host token is published in this repository - is worse than
+     * one that refuses to start and names the path it wanted.
      */
     #[Test]
-    public function the_editor_profiles_do_not_pin_a_configuration_file(): void
+    public function nothing_stands_in_for_a_missing_configuration(): void
+    {
+        if (array_filter(Bootstrap::configCandidates(), 'is_file') !== []) {
+            self::markTestSkipped('A real configuration is present, so there is nothing to be missing.');
+        }
+
+        // The variable that used to supply one, set and pointing at a readable
+        // file, so this fails if the mechanism is ever reintroduced.
+        $decoy = tempnam(sys_get_temp_dir(), 'ddns-decoy-') ?: throw new \RuntimeException('tempnam failed');
+        file_put_contents($decoy, "hosts: {}\n");
+        $_ENV['DDNS_CONFIG_FALLBACK'] = $decoy;
+
+        try {
+            $this->expectException(\Ddns\Config\Exception\ConfigurationError::class);
+
+            Bootstrap::discoverConfigPath();
+        } finally {
+            unset($_ENV['DDNS_CONFIG_FALLBACK']);
+            unlink($decoy);
+        }
+    }
+
+    /**
+     * The editor profiles used to pin DDNS_CONFIG at a committed sample, so
+     * pressing play served a different file - and a different host token -
+     * from the one `config:init` had just written, with nothing to say so.
+     * They now use the same discovery as everything else, with no exceptions:
+     * the one profile that existed to run the sample went with the sample.
+     */
+    #[Test]
+    public function no_editor_profile_pins_a_configuration_file(): void
     {
         $directory = Bootstrap::projectRoot() . '/.vscode';
 
@@ -151,97 +174,16 @@ final class BootstrapTest extends TestCase
 
             self::assertIsArray($env);
 
-            // One profile exists precisely to run the sample, and says so.
-            if (str_contains($name, 'sample')) {
-                self::assertArrayHasKey('DDNS_CONFIG', $env, $name);
-
-                continue;
-            }
-
             self::assertArrayNotHasKey('DDNS_CONFIG', $env, sprintf(
                 '"%s" pins a configuration file, so it would not use the one config:init writes.',
                 $name,
             ));
 
-            // Whatever a profile falls back to has to be there, or a fresh
-            // clone gets an error on the first press of play.
-            $fallback = $env['DDNS_CONFIG_FALLBACK'] ?? null;
-
-            if (is_string($fallback)) {
-                self::assertFileExists(
-                    str_replace('${workspaceFolder}', Bootstrap::projectRoot(), $fallback),
-                    sprintf('"%s" falls back to a file that is not in the repository.', $name),
-                );
-            }
+            self::assertArrayNotHasKey('DDNS_CONFIG_FALLBACK', $env, sprintf(
+                '"%s" sets a fallback, which the application no longer consults.',
+                $name,
+            ));
         }
-    }
-
-    /**
-     * The editor profiles set a fallback so a clone with no configuration runs
-     * with no setup, which is what removing the pin had taken away. It applies
-     * only when nothing real is found, so it steps aside the moment
-     * `config:init` has written something.
-     *
-     * Uses a file of its own rather than the committed sample, so it tests the
-     * mechanism wherever it runs - the images ship the application, not the
-     * sample configuration.
-     */
-    #[Test]
-    public function the_fallback_is_used_only_when_nothing_real_exists(): void
-    {
-        $fallback = tempnam(sys_get_temp_dir(), 'ddns-fallback-') ?: throw new \RuntimeException('tempnam failed');
-        file_put_contents($fallback, "hosts: {}\n");
-
-        try {
-            $_ENV['DDNS_CONFIG_FALLBACK'] = $fallback;
-
-            $existing = array_values(array_filter(Bootstrap::configCandidates(), 'is_file'));
-
-            if ($existing !== []) {
-                // A real configuration is present, so it wins outright and the
-                // fallback is not reported as being in use.
-                self::assertSame($existing[0], Bootstrap::discoverConfigPath());
-                self::assertFalse(Bootstrap::isFallbackConfig($existing[0]));
-
-                return;
-            }
-
-            self::assertSame($fallback, Bootstrap::discoverConfigPath());
-            self::assertTrue(Bootstrap::isFallbackConfig($fallback));
-        } finally {
-            unlink($fallback);
-        }
-    }
-
-    #[Test]
-    public function nothing_falls_back_unless_it_is_asked_for(): void
-    {
-        // Production sets no fallback. Starting up on a sample configuration -
-        // whose host token is published in this repository - would be worse
-        // than refusing to start.
-        if (array_filter(Bootstrap::configCandidates(), 'is_file') !== []) {
-            self::markTestSkipped('A real configuration is present, so there is nothing to fall back from.');
-        }
-
-        $this->expectException(\Ddns\Config\Exception\ConfigurationError::class);
-
-        Bootstrap::discoverConfigPath();
-    }
-
-    #[Test]
-    public function a_fallback_that_is_not_there_is_ignored(): void
-    {
-        // A stale path in the environment must not become a configuration
-        // file the loader then fails to read: it is simply not a candidate.
-        if (array_filter(Bootstrap::configCandidates(), 'is_file') !== []) {
-            self::markTestSkipped('A real configuration is present, so the fallback is never reached.');
-        }
-
-        $_ENV['DDNS_CONFIG_FALLBACK'] = '/tmp/ddns-no-such-fallback.yaml';
-
-        $this->expectException(\Ddns\Config\Exception\ConfigurationError::class);
-
-        Bootstrap::discoverConfigPath();
     }
 
     #[Test]

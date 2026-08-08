@@ -4,13 +4,12 @@
 /.phpunit.result.cache
 /composer.lock.bak
 
-# Local runtime configuration and secrets
+# Local runtime configuration and secrets. The configuration is generated -
+# by `ddns config:init` or `ddns config:init --sample` - and never committed,
+# so that only one file can ever be the one the application reads.
 /.env
 /.env.local
-/ddns.yaml
-/ddns.yml
 /config/ddns.yaml
-/config/ddns.yml
 
 # Editor / OS noise
 /.idea/

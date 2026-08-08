@@ -4,15 +4,10 @@
   // README. Every configuration here also works with "Run Without Debugging"
   // (Ctrl+F5 / Cmd+F5), which needs neither.
   //
-  // These use whatever configuration the application itself would find -
-  // config/ddns.yaml, as written by `ddns config:init`. They used to pin the
-  // committed sample instead, which meant the server you started answered with
-  // a different config, and a different host token, from the one the wizard
-  // had just given you.
-  //
-  // DDNS_CONFIG_FALLBACK is used only when no real configuration exists, so a
-  // fresh clone still runs with no setup at all and stops doing so the moment
-  // you have your own. The server says which of the two it loaded as it starts.
+  // These use whatever configuration the application itself would find:
+  // config/ddns.yaml, and nothing else. There is no fallback and no sample
+  // standing in for it - run `ddns config:init --sample` once after cloning
+  // and every profile here works. The server logs which file it loaded.
   "version": "0.2.0",
   "configurations": [
     {
@@ -37,40 +32,11 @@
       "program": "${workspaceFolder}/public/index.php",
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003,
       "serverReadyAction": {
         // Matches "PHP 8.3.29 Development Server (http://127.0.0.1:8080) started".
-        "pattern": "Development Server \\(http://[^:]+:([0-9]+)\\) started",
-        "uriFormat": "http://localhost:%s/api",
-        "action": "openExternally"
-      }
-    },
-    {
-      // For a fresh clone with no configuration yet: the committed sample,
-      // which boots and answers with placeholder credentials. Named so it is
-      // obvious this is not your own configuration.
-      "name": "Serve (php -S, sample config)",
-      "type": "php",
-      "request": "launch",
-      "runtimeArgs": [
-        "-dxdebug.mode=debug",
-        "-dxdebug.start_with_request=yes",
-        "-S",
-        "127.0.0.1:8080",
-        "-t",
-        "public"
-      ],
-      "program": "${workspaceFolder}/public/index.php",
-      "cwd": "${workspaceFolder}",
-      "env": {
-        "DDNS_CONFIG": "${workspaceFolder}/ddns.dev.yaml",
-        "DDNS_LOG_LEVEL": "DEBUG"
-      },
-      "port": 9003,
-      "serverReadyAction": {
         "pattern": "Development Server \\(http://[^:]+:([0-9]+)\\) started",
         "uriFormat": "http://localhost:%s/api",
         "action": "openExternally"
@@ -92,7 +58,6 @@
       "program": "${workspaceFolder}/public/index.php",
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003,
@@ -110,7 +75,6 @@
       "args": ["hosts:list"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003
@@ -123,7 +87,6 @@
       "args": ["config:validate"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003
@@ -138,7 +101,6 @@
       "args": ["update", "--all", "--dry-run", "-v"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003
@@ -152,13 +114,23 @@
       "args": ["watch", "--all", "--interval", "30", "-v"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "DDNS_CONFIG_FALLBACK": "${workspaceFolder}/ddns.dev.yaml",
         "DDNS_LOG_LEVEL": "DEBUG"
       },
       "port": 9003,
       // Ctrl+C is not available in the debug console, and watch installs
       // signal handlers, so use the stop button - it terminates the process.
       "console": "integratedTerminal"
+    },
+    {
+      // Step one in a fresh clone: without a configuration file nothing else
+      // here starts. Asks nothing, so the debug console can run it.
+      "name": "CLI: config:init --sample",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/bin/ddns",
+      "args": ["config:init", "--sample"],
+      "cwd": "${workspaceFolder}",
+      "port": 9003
     },
     {
       "name": "CLI: config:init (wizard)",

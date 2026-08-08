@@ -9,7 +9,6 @@ bin/ddns text eol=lf
 /.github         export-ignore
 /compose.yaml    export-ignore
 /compose.dev.yaml export-ignore
-/ddns.dev.yaml   export-ignore
 /Dockerfile      export-ignore
 /.dockerignore   export-ignore
 /phpunit.xml.dist export-ignore

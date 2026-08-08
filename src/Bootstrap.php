@@ -26,21 +26,18 @@ final class Bootstrap
     public const VERSION = '1.0.0';
 
     /**
-     * Where the configuration is looked for, relative to the project root, in
-     * order of preference.
+     * Where the configuration is looked for, relative to the project root.
      *
-     * `config/` comes first because that is where `config:init` writes and
-     * where the container expects it mounted, so the same path means the same
-     * thing on the host and in the image. The project root is still searched,
-     * because that is where earlier versions put it.
+     * Exactly one path, deliberately. `config/ddns.yaml` is where `config:init`
+     * writes and where the container expects the file mounted, so the same path
+     * means the same thing on the host and in the image. Searching alternatives
+     * bought very little and cost the only question that matters when an answer
+     * surprises you - which file is this actually reading?
      *
      * @var list<string>
      */
     private const CONFIG_CANDIDATES = [
         'config/ddns.yaml',
-        'config/ddns.yml',
-        'ddns.yaml',
-        'ddns.yml',
     ];
 
     /** Where `config:init` writes when it is not told otherwise. */
@@ -86,7 +83,9 @@ final class Bootstrap
      * Locate the configuration file.
      *
      * `DDNS_CONFIG` wins so a container can mount the file anywhere; otherwise
-     * the conventional locations in the project root are tried in order.
+     * `config/ddns.yaml` is the only thing looked for. Nothing stands in for a
+     * configuration that is not there: an application answering from a file
+     * nobody chose is worse than one that refuses to start.
      *
      * @throws ConfigurationError when nothing is found
      */
@@ -98,39 +97,15 @@ final class Bootstrap
             return $explicit;
         }
 
-        $root = self::projectRoot();
-
-        foreach (self::CONFIG_CANDIDATES as $candidate) {
-            $path = $root . '/' . $candidate;
-
-            if (is_file($path)) {
-                return $path;
+        foreach (self::configCandidates() as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
             }
-        }
-
-        // Only reached when nothing real exists. The editor profiles point
-        // this at the committed sample so that a fresh clone runs with no
-        // setup at all; nothing sets it in production, where starting up on a
-        // sample configuration - with a token published in this repository -
-        // would be far worse than refusing to start.
-        $fallback = self::environment()->get('DDNS_CONFIG_FALLBACK');
-
-        if (is_string($fallback) && trim($fallback) !== '' && is_file(trim($fallback))) {
-            return trim($fallback);
         }
 
         throw ConfigurationError::notFound(self::configCandidates());
     }
 
-    /**
-     * `DDNS_CONFIG`, wherever it was set.
-     *
-     * Reads the superglobals as well as `getenv()`, because phpdotenv v5 loads
-     * `.env` into `$_ENV` and `$_SERVER` without calling `putenv()`. Consulting
-     * only `getenv()` meant a `DDNS_CONFIG` written in `.env` was silently
-     * ignored while every other variable in that file worked, since the config
-     * loader reads the superglobals for its `${VAR}` placeholders.
-     */
     /**
      * Every place the configuration is looked for, in order of preference.
      *
@@ -143,26 +118,20 @@ final class Bootstrap
         return array_map(static fn (string $c): string => $root . '/' . $c, self::CONFIG_CANDIDATES);
     }
 
+    /**
+     * `DDNS_CONFIG`, wherever it was set.
+     *
+     * Reads the superglobals as well as `getenv()`, because phpdotenv v5 loads
+     * `.env` into `$_ENV` and `$_SERVER` without calling `putenv()`. Consulting
+     * only `getenv()` meant a `DDNS_CONFIG` written in `.env` was silently
+     * ignored while every other variable in that file worked, since the config
+     * loader reads the superglobals for its `${VAR}` placeholders.
+     */
     public static function configPathFromEnvironment(): ?string
     {
         $value = self::environment()->get('DDNS_CONFIG');
 
         return is_string($value) && trim($value) !== '' ? trim($value) : null;
-    }
-
-    /**
-     * Whether the configuration in use is only there because nothing real was
-     * found, so callers can say so rather than let it pass unnoticed.
-     */
-    public static function isFallbackConfig(string $path): bool
-    {
-        $fallback = self::environment()->get('DDNS_CONFIG_FALLBACK');
-
-        if (!is_string($fallback) || trim($fallback) === '') {
-            return false;
-        }
-
-        return (realpath(trim($fallback)) ?: trim($fallback)) === (realpath($path) ?: $path);
     }
 
     private static function environment(): Environment

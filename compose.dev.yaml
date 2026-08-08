@@ -1,10 +1,12 @@
 # Development.
 #
+#   ddns config:init --sample               # once, after cloning
 #   docker compose -f compose.dev.yaml up
 #
-# That is the whole setup: ddns.dev.yaml is committed with placeholder
-# credentials, enough to boot and answer /health. Put real tokens in .env when
-# you want an update to actually reach a provider.
+# The first command is not optional: config/ddns.yaml is the only file the
+# application reads, and it is generated rather than committed, so that there
+# is never a second configuration it might have answered from. --sample asks
+# nothing and writes credentials of its own into .env.
 #
 # Source directories are bind-mounted, so editing a file under src/ takes
 # effect on the next request - no rebuild. Rebuild only when composer.json or
@@ -31,7 +33,11 @@ x-dev: &dev
     target: dev
   image: ddns:dev
   environment:
-    DDNS_CONFIG: /config/ddns.yaml
+    # ./config is bind-mounted below, so this is ./config/ddns.yaml on the
+    # host - the same file the CLI reads there, reached through the mount that
+    # already exists. The image's own default points at /config, which only
+    # production mounts.
+    DDNS_CONFIG: /app/config/ddns.yaml
     DDNS_LOG_LEVEL: ${DDNS_LOG_LEVEL:-DEBUG}
   env_file:
     - path: .env
@@ -44,16 +50,34 @@ x-dev: &dev
     - ./config:/app/config
     - ./public:/app/public
     - ./bin:/app/bin
-    - type: bind
-      source: ./ddns.dev.yaml
-      target: /config/ddns.yaml
-      read_only: true
-      bind:
-        create_host_path: false
+
+# The configuration is required, and saying so as a bind means a clone that has
+# not run `config:init --sample` yet is told by Docker, at once, which file is
+# missing. create_host_path is off because Docker would otherwise create a
+# *directory* with that name and the container would fail on a parse error
+# instead.
+#
+# Only on the services you `up`. `tools` and `cli` are how you create the file
+# in the first place - `run --rm cli config:init --sample` - so requiring it
+# there would leave nothing able to start until something else had already run.
+x-config: &config
+  type: bind
+  source: ./config/ddns.yaml
+  target: /app/config/ddns.yaml
+  read_only: true
+  bind:
+    create_host_path: false
 
 services:
   server:
     <<: *dev
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./config:/app/config
+      - ./public:/app/public
+      - ./bin:/app/bin
+      - *config
     ports:
       - "${DDNS_DEV_PORT:-8080}:8080"
     # No restart policy: a crash should stay visible rather than loop.
@@ -61,6 +85,13 @@ services:
   watcher:
     <<: *dev
     profiles: ["watcher"]
+    volumes:
+      - ./src:/app/src
+      - ./tests:/app/tests
+      - ./config:/app/config
+      - ./public:/app/public
+      - ./bin:/app/bin
+      - *config
     # A short interval and verbose output, to actually see the loop working.
     command: ["bin/ddns", "watch", "--all", "--interval", "30", "-v"]
     healthcheck:
@@ -72,13 +103,13 @@ services:
     profiles: ["tools"]
     command: ["composer", "check"]
     environment:
-      DDNS_CONFIG: /config/ddns.yaml
+      DDNS_CONFIG: /app/config/ddns.yaml
       DDNS_LOG_LEVEL: ERROR
       # The image runs a newer PHP than the composer.json floor, which
       # PHP-CS-Fixer warns about and would otherwise fail CI-style runs.
       PHP_CS_FIXER_IGNORE_ENV: "1"
 
-  # `run --rm cli update --all --dry-run`
+  # `run --rm cli config:init --sample`, then `run --rm cli update --all --dry-run`
   cli:
     <<: *dev
     profiles: ["tools"]

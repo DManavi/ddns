@@ -136,9 +136,9 @@ to cover removed entirely.
 
 **Do not assert on repository files.** The Docker test image ships only
 `bin config public src tests vendor` plus four root config files, so a test that
-reads `.vscode/launch.json` or `ddns.dev.yaml` passes locally and fails in CI.
-This has happened twice. Prefer a temp file exercising the mechanism; where a
-real checkout is genuinely required, skip on the *directory* being absent so a
+reads `.vscode/launch.json` or `compose.dev.yaml` passes locally and fails in
+CI. This has happened twice. Prefer a temp file exercising the mechanism; where
+a real checkout is genuinely required, skip on the *directory* being absent so a
 deletion still fails the test.
 
 You can reproduce the image layout in seconds:
@@ -156,17 +156,25 @@ cd /tmp/imgsim && vendor/bin/phpunit
 Discovery order, in `src/Bootstrap.php`:
 
 1. `$DDNS_CONFIG`
-2. `config/ddns.yaml`, then `config/ddns.yml`
-3. `ddns.yaml`, then `ddns.yml`
-4. `$DDNS_CONFIG_FALLBACK` — consulted last, and only if the file exists
+2. `config/ddns.yaml`
 
-The fallback exists so the editor's debug profiles can serve the sample config
-without pinning `DDNS_CONFIG` and overriding a real one. **Production must never
-set it**: the sample's token is published in this repository.
+That is the whole list, and it is deliberately short. Nothing stands in for a
+missing file: with no configuration the application refuses to start. There used
+to be four candidate paths and a `$DDNS_CONFIG_FALLBACK` behind them pointing at
+a committed `ddns.dev.yaml`, which meant the server could be answering from a
+sample nobody had chosen, with a host token published in this repository. Do not
+reintroduce a fallback; `BootstrapTest` fails if one appears.
+
+`config/ddns.yaml` is generated, never committed. `ddns config:init` asks
+questions; `ddns config:init --sample` asks none and writes a local-development
+configuration with generated credentials. The dev Compose stack and the editor
+profiles both expect one of those to have been run.
 
 **No secret belongs in the YAML.** Configuration holds `${VAR}` placeholders;
 values live in `.env`, written `0600`. Commands that generate a token print it
-once and never again, because nothing stores it in recoverable form.
+once and never again, because nothing stores it in recoverable form — except
+`--sample`, which prints neither of the two it generates and points at `.env`,
+since a development token is read back far more often than it is used once.
 
 Two container bindings are the seams for redirecting I/O — `config.path` and
 `env.path`. Tests override both. If you add a command that writes somewhere new,

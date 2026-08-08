@@ -44,9 +44,10 @@ final class ConfigurationError extends \RuntimeException
     {
         return new self(sprintf(
             "No configuration file found.\n\n"
-            . "Create one with:\n"
-            . "  ddns config:init\n\n"
-            . "Or write it yourself at one of these paths, starting from config/ddns.example.yaml:\n%s\n"
+            . "Create one with either of:\n"
+            . "  ddns config:init            answer a few questions\n"
+            . "  ddns config:init --sample   a working local configuration, no questions\n\n"
+            . "Or write it yourself, starting from config/ddns.example.yaml, at:\n%s\n"
             . 'Set DDNS_CONFIG, or pass --config, to keep it somewhere else.',
             implode("\n", array_map(static fn (string $c): string => '  - ' . $c, $candidates)),
         ), namesPaths: true);

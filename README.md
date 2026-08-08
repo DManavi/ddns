@@ -97,8 +97,9 @@ reverse proxy terminates TLS in front of it. Set `DDNS_HTTP_BIND=0.0.0.0:8080`
 to expose it directly. The container runs as uid 1000 with a read-only root
 filesystem and all capabilities dropped.
 
-**Development:** `docker compose -f compose.dev.yaml up`, which needs no setup
-at all — see [Running it locally](#running-it-locally).
+**Development:** `./bin/ddns config:init --sample` once, then
+`docker compose -f compose.dev.yaml up` — see
+[Running it locally](#running-it-locally).
 
 The two stacks use different Compose project names (`ddns` and `ddns-dev`), so
 a dev stack can never collide with a production one on the same host.
@@ -419,17 +420,16 @@ hosts:
 ```
 
 `config/ddns.example.yaml` is fully annotated. The file is discovered from
-`$DDNS_CONFIG` — which may be set in `.env` — then `./config/ddns.yaml`,
-`./config/ddns.yml`, `./ddns.yaml`, `./ddns.yml`; `--config` overrides all of
-them. `$DDNS_CONFIG_FALLBACK` is consulted only when none of those exist, and
-is meant for development; see [VS Code](#vs-code).
+`$DDNS_CONFIG` — which may be set in `.env` — and otherwise from
+`./config/ddns.yaml`, which is the only path searched; `--config` overrides
+both. Nothing stands in for a configuration that is not there: with no file the
+application refuses to start and says which path it wanted.
 
-`config/` is where `config:init` writes and where the container expects the
-file mounted, so the same path means the same thing on the host and in the
-image. The project root is still searched, for installations that predate
-that; if a file is found there while one also exists under `config/`, the
-`config/` one wins and `config:init` says so rather than leaving you with a
-file nothing reads.
+`config/` is where `config:init` writes and where the container expects the file
+mounted, so the same path means the same thing on the host and in the image. It
+is generated rather than committed — by the wizard, or by
+`config:init --sample` — and gitignored, so there is never a second file the
+application might have answered from.
 
 ### The wizard
 
@@ -458,6 +458,36 @@ a value already in `.env`.
 `--env` writes the secrets somewhere other than the project root. Only the
 project's own `.env` is loaded at runtime, so use it for review rather than for
 a live deployment.
+
+#### `--sample`
+
+```console
+$ ddns config:init --sample
+```
+
+Asks nothing. Writes a configuration for working on ddns itself: one
+DigitalOcean account and one host, `home.example.com`, with randomly generated
+credentials in `.env`. This is what a fresh clone runs first — without a
+configuration file nothing starts, by design.
+
+It is not a production configuration, and says so in its own header. It trusts
+the private ranges as proxies and permits publishing private addresses, so that
+a request arriving through Docker's bridge behaves like a real one; both are
+wrong on a public deployment. The provider credential is not a real account, so
+booting, `/health`, `config:validate` and the test suite all work while an
+actual update is refused upstream.
+
+The same two guarantees apply: the result is validated before it is written,
+and no credential is written into the YAML. Neither generated value is printed —
+read the host token from `.env` when you need it:
+
+```bash
+grep '^HOME_TOKEN=' .env
+```
+
+Re-running needs `--force`, and because there is nobody to ask, a `--force` run
+leaves the values already in `.env` alone rather than replacing a credential
+silently.
 
 ### Reference
 
@@ -890,7 +920,7 @@ For routers that only accept a full URL, use the query-parameter form.
 ## CLI
 
 ```console
-$ ddns config:init [--config=PATH] [--env=PATH] [--force]
+$ ddns config:init [--sample] [--config=PATH] [--env=PATH] [--force]
 $ ddns update [<host>...] [--all] [--ip=IP]... [--dry-run] [--json]
 $ ddns watch  [<host>...] [--all] [--interval=300] [--force-after=12] [--once] [--json]
 $ ddns hosts:list [--json]
@@ -1196,16 +1226,30 @@ being changed without the lock being regenerated.
 ### Running it locally
 
 ```bash
+composer install
+./bin/ddns config:init --sample
+docker compose -f compose.dev.yaml up
+```
+
+The middle step is not optional. `config/ddns.yaml` is the only file the
+application reads, and it is generated rather than committed, so that nothing
+can ever be answering from a second one. [`--sample`](#--sample) asks nothing
+and writes credentials of its own into `.env`.
+
+Without PHP on the host, generate it in the container instead — the `cli` and
+`tools` services deliberately do not require the file, since they are how you
+create it:
+
+```bash
+docker compose -f compose.dev.yaml run --rm cli config:init --sample
 docker compose -f compose.dev.yaml up
 ```
 
 Then open <http://localhost:8080/>, which redirects to the
-[browsable API](#openapi). That is the whole setup — there is nothing to copy
-or edit first, because `ddns.dev.yaml` is committed with placeholder
-credentials, and the host token in it is committed too:
+[browsable API](#openapi). The host token is the one just generated:
 
 ```bash
-curl -H "Authorization: Bearer dev-token-0123456789abcdef" \
+curl -H "Authorization: Bearer $(grep '^HOME_TOKEN=' .env | cut -d= -f2)" \
      http://localhost:8080/v1/hosts/home
 ```
 
@@ -1243,13 +1287,18 @@ DDNS_DEV_PORT=9090 docker compose -f compose.dev.yaml up
 docker compose -f compose.dev.yaml down
 ```
 
+If `up` fails with a bind error naming `./config/ddns.yaml`, that is the missing
+first step. Docker will not invent the file, and is told not to, because it
+would otherwise create a *directory* with that name and the container would
+fail with a confusing parse error instead.
+
 #### What works without any credentials
 
 Booting, `/health`, `/api`, `config:validate`, `hosts:list` and the entire test
 suite — no test touches the network.
 
 An **update** does not. Even `--dry-run` reads the current record from the
-provider before deciding what would change, so with the placeholder token it
+provider before deciding what would change, so with the generated credential it
 comes back with a clear rejection:
 
 ```console
@@ -1259,17 +1308,16 @@ $ docker compose -f compose.dev.yaml run --rm cli update --all --dry-run
                                                       API credentials. Unable to authenticate you
 ```
 
-To make updates real, put a token in `.env` — `ddns.dev.yaml` reads
-`${DO_TOKEN:-dev-placeholder-token}`, so it is picked up with no further
-change:
+To make updates real, replace the generated value in `.env` with a token of
+your own, under the variable the configuration references:
 
 ```bash
-echo 'DO_TOKEN=dop_v1_...' >> .env
+sed -i 's/^DEV_TOKEN=.*/DEV_TOKEN=dop_v1_.../' .env
 docker compose -f compose.dev.yaml up
 ```
 
-Use a throwaway zone. `.env` is gitignored; `ddns.dev.yaml` is not, so never
-put a real credential in it.
+Use a throwaway zone. `.env` and `config/ddns.yaml` are both gitignored and both
+written `0600`, so nothing generated here is committable by accident.
 
 ### Running it without Docker
 
@@ -1277,30 +1325,30 @@ Requires PHP 8.2+ with `curl`, `mbstring` and `xml`.
 
 ```bash
 composer install
-DDNS_CONFIG=ddns.dev.yaml php -S 127.0.0.1:8080 -t public public/index.php
+./bin/ddns config:init --sample
+php -S 127.0.0.1:8080 -t public public/index.php
 ```
 
-The same dev configuration, so the same URLs and the same committed token work.
-For the CLI, `DDNS_CONFIG=ddns.dev.yaml ./bin/ddns hosts:list`.
+The same configuration the container reads, so the same URLs and the same token
+work. For the CLI, `./bin/ddns hosts:list`.
 
 ### VS Code
 
-`.vscode/launch.json` is committed, so **Run and Debug** is populated the
-moment the repository is opened, and it needs no setup: the profiles fall back
-to the committed `ddns.dev.yaml` when you have no configuration of your own.
-As soon as `config:init` has written one, that is used instead — so what you
-debug is what you configured, and a fresh clone still runs on the first press.
+`.vscode/launch.json` is committed, so **Run and Debug** is populated the moment
+the repository is opened. Run **CLI: config:init --sample** once — until
+`config/ddns.yaml` exists nothing else here starts — and every other profile
+works against it afterwards.
 
-The fallback is `DDNS_CONFIG_FALLBACK`, which nothing sets in production;
-without it, a server with no configuration refuses to start rather than
-quietly answering with a sample whose host token is published in this
-repository.
+No profile pins a configuration file. They all use the same discovery the
+application does, so what you debug is always what you configured; a profile
+that pinned one meant the server you started answered with a different config,
+and a different host token, from the one the wizard had just given you.
 
 | Profile | What it does |
 | --- | --- |
 | **Serve (php -S)** | Starts the built-in server on `127.0.0.1:8080` and opens `/api` |
-| **Serve (php -S, sample config)** | The same, against the committed `ddns.dev.yaml` — for a clone with no configuration yet |
 | **Serve (php -S, random port)** | The same, on a port the system picks, for when 8080 is taken |
+| **CLI: config:init --sample** | Writes the development configuration — run this first |
 | **CLI: …** | `hosts:list`, `config:validate`, `update --all --dry-run`, `watch --all`, the `config:init` wizard |
 | **PHPUnit: …** | The whole suite, the file you have open, or a `--filter` you are prompted for |
 | **Listen for Xdebug** | Attaches to a request handled elsewhere — the dev container, Apache, PHP-FPM |
@@ -1325,13 +1373,10 @@ configuration file it loaded as it starts:
 
 ```
 ddns.DEBUG:  Loaded configuration. {"path":"/…/config/ddns.yaml","hosts":1}
-ddns.NOTICE: Loaded a fallback configuration; run `ddns config:init` to create your own.
 ```
 
 That is the first line to check whenever a token works in one place and not
-another — it usually means two things are reading two different files. The
-fallback notice is a `NOTICE` rather than a `DEBUG`, so it shows without
-turning the logs up.
+another — it usually means two things are reading two different files.
 
 Personal settings stay out of the repository: `.vscode/` is gitignored apart
 from `launch.json` and `extensions.json`.
