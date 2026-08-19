@@ -1,0 +1,47 @@
+# Temporary diagnostic - isolates why the Docker Hub repository-metadata PATCH
+# returns "access denied: insufficient scope". Not part of the permanent
+# workflow set; removed once understood.
+
+name: DEBUG Docker Hub scope
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe the Docker Hub API
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo="dmanavi/ddns"
+
+          auth_response="$(curl -sS -X POST https://hub.docker.com/v2/auth/token \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+              '{identifier: $u, secret: $p}')")"
+          echo "auth response keys: $(echo "$auth_response" | jq -r 'keys | join(",")')"
+          token="$(echo "$auth_response" | jq -r '.access_token')"
+          echo "token length: ${#token}"
+
+          echo "--- GET current repo info ---"
+          get_status="$(curl -sS -o /tmp/get.json -w '%{http_code}' \
+            --oauth2-bearer "$token" "https://hub.docker.com/v2/repositories/${repo}")"
+          echo "GET status: $get_status"
+          jq '{description, categories, permissions, user}' /tmp/get.json || cat /tmp/get.json
+
+          echo "--- PATCH description only ---"
+          desc_status="$(curl -sS -o /tmp/desc-only.json -w '%{http_code}' \
+            -X PATCH "https://hub.docker.com/v2/repositories/${repo}" \
+            --oauth2-bearer "$token" \
+            -H 'Content-Type: application/json' \
+            --data '{"description":"temp diagnostic description"}')"
+          echo "PATCH status: $desc_status"
+          cat /tmp/desc-only.json
+          echo
