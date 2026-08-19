@@ -1,0 +1,313 @@
+# Verify the published packages.
+#
+# Independently pulls or installs each of the three things the publish
+# workflows ship - the ghcr.io image, the Docker Hub image, and the Packagist
+# package - and exercises the CLI and HTTP surface documented in the README,
+# without any real DNS provider credentials. A placeholder token is enough to
+# prove the whole path works: configuration loads, the server answers, and an
+# update attempt actually reaches the provider and is rejected cleanly rather
+# than crashing - the same proof `compose.dev.yaml`'s `--sample` flow gives
+# locally, run here against what was actually published instead of what is
+# on disk.
+#
+# On request only, not part of the ordinary CI loop: this pulls from real
+# registries and Packagist, which is only useful after something has been
+# published.
+
+name: Verify published packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to verify, e.g. 1.20260819.0812. Defaults to the latest release."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve the version to verify
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Work out which version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          else
+            tag="$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)"
+            version="${tag#v}"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  docker:
+    name: "Docker: ${{ matrix.name }}"
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ghcr.io
+            image: ghcr.io/dmanavi/ddns
+          - name: Docker Hub
+            image: dmanavi/ddns
+
+    steps:
+      # Only for the config template below - the image itself is pulled from
+      # the registry, not built from this checkout.
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.resolve.outputs.version }}
+
+      - name: Pull the image
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: docker pull "${IMAGE}:${VERSION}"
+
+      - name: Runs as a non-root user
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: test "$(docker run --rm "${IMAGE}:${VERSION}" id -u)" = "1000"
+
+      - name: Reports the version it was tagged with
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(docker run --rm "${IMAGE}:${VERSION}" bin/ddns --version)"
+          echo "$actual"
+          printf '%s' "$actual" | grep -qF "$VERSION"
+
+      - name: Lists the bundled providers
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: docker run --rm "${IMAGE}:${VERSION}" bin/ddns providers:list
+
+      # No real credential exists anywhere in this job. config/ddns.example.yaml
+      # is the same file a real user copies in the Quick Start, filled in with
+      # placeholders rather than a hand-edited value.
+      - name: Prepare a configuration with no real credentials
+        run: |
+          set -euo pipefail
+          cp config/ddns.example.yaml /tmp/ddns.yaml
+          {
+            echo "DO_TOKEN=verify-placeholder-token"
+            echo "HOME_TOKEN=verify-placeholder-host-token"
+          } > /tmp/ddns.env
+
+      - name: Validates that configuration
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          docker run --rm --env-file /tmp/ddns.env \
+            -v /tmp/ddns.yaml:/config/ddns.yaml:ro \
+            "${IMAGE}:${VERSION}" bin/ddns config:validate
+
+      - name: Lists the configured hosts
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          output="$(docker run --rm --env-file /tmp/ddns.env \
+            -v /tmp/ddns.yaml:/config/ddns.yaml:ro \
+            "${IMAGE}:${VERSION}" bin/ddns hosts:list)"
+          echo "$output"
+          printf '%s' "$output" | grep -qF "home"
+
+      # A placeholder token cannot succeed, so the only honest outcome is a
+      # clean rejection from the real provider once the request actually
+      # reaches it - proving the whole path (config, HTTP client, driver)
+      # runs, without needing a credential that works.
+      - name: Attempts an update and is cleanly rejected
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(docker run --rm --env-file /tmp/ddns.env \
+            -v /tmp/ddns.yaml:/config/ddns.yaml:ro \
+            "${IMAGE}:${VERSION}" bin/ddns update --all --dry-run)"
+          status=$?
+          set -e
+
+          echo "$output"
+
+          test "$status" -ne 0 || {
+            echo "Expected a non-zero exit with a placeholder credential." >&2
+            exit 1
+          }
+          printf '%s' "$output" | grep -qF 'rejected the configured API credentials'
+
+      - name: Serves HTTP
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          docker run -d --rm --name verify-server --env-file /tmp/ddns.env \
+            -v /tmp/ddns.yaml:/config/ddns.yaml:ro -p 18080:8080 \
+            "${IMAGE}:${VERSION}"
+          trap 'docker logs verify-server; docker stop verify-server >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:18080/health
+          echo
+          curl -fsS http://127.0.0.1:18080/api >/dev/null
+
+          # HTTP Basic, one of the three documented ways to present the host
+          # token - the username is ignored, only the password (the token) is
+          # checked.
+          curl -fsS -u "home:verify-placeholder-host-token" \
+            http://127.0.0.1:18080/v1/hosts/home >/dev/null
+
+          # Same placeholder-credential rejection as the CLI, through the HTTP
+          # front-end instead - 502 is what AuthenticationFailed maps to. The
+          # token travels as the documented query parameter this time, to
+          # exercise a second transport.
+          status="$(curl -s -o /tmp/update-response.json -w '%{http_code}' \
+            "http://127.0.0.1:18080/v1/hosts/home/update?dry_run=1&token=verify-placeholder-host-token")"
+          cat /tmp/update-response.json
+          echo
+          test "$status" = "502"
+
+  packagist:
+    name: Packagist
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    steps:
+      # Only for the config template below - the package itself is installed
+      # from Packagist, not from this checkout.
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.resolve.outputs.version }}
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, curl, xml, pcntl
+          coverage: none
+          tools: composer:v2
+
+      - name: Install from Packagist
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          composer create-project "dmanavi/ddns:v${VERSION}" /tmp/ddns-from-packagist \
+            --no-interaction --no-progress --prefer-dist
+
+      - name: Reports the version it was tagged with
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          actual="$(/tmp/ddns-from-packagist/bin/ddns --version)"
+          echo "$actual"
+          printf '%s' "$actual" | grep -qF "$VERSION"
+
+      - name: Lists the bundled providers
+        run: /tmp/ddns-from-packagist/bin/ddns providers:list
+
+      - name: Prepare a configuration with no real credentials
+        run: cp config/ddns.example.yaml /tmp/ddns-from-packagist/config/ddns.yaml
+
+      - name: Validates that configuration
+        working-directory: /tmp/ddns-from-packagist
+        env:
+          DO_TOKEN: verify-placeholder-token
+          HOME_TOKEN: verify-placeholder-host-token
+        run: ./bin/ddns config:validate
+
+      - name: Lists the configured hosts
+        working-directory: /tmp/ddns-from-packagist
+        env:
+          DO_TOKEN: verify-placeholder-token
+          HOME_TOKEN: verify-placeholder-host-token
+        run: |
+          set -euo pipefail
+          output="$(./bin/ddns hosts:list)"
+          echo "$output"
+          printf '%s' "$output" | grep -qF "home"
+
+      - name: Attempts an update and is cleanly rejected
+        working-directory: /tmp/ddns-from-packagist
+        env:
+          DO_TOKEN: verify-placeholder-token
+          HOME_TOKEN: verify-placeholder-host-token
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(./bin/ddns update --all --dry-run)"
+          status=$?
+          set -e
+
+          echo "$output"
+
+          test "$status" -ne 0 || {
+            echo "Expected a non-zero exit with a placeholder credential." >&2
+            exit 1
+          }
+          printf '%s' "$output" | grep -qF 'rejected the configured API credentials'
+
+      - name: Serves HTTP
+        working-directory: /tmp/ddns-from-packagist
+        env:
+          DO_TOKEN: verify-placeholder-token
+          HOME_TOKEN: verify-placeholder-host-token
+        run: |
+          set -euo pipefail
+
+          php -S 127.0.0.1:18081 -t public public/index.php &
+          server_pid=$!
+          trap 'kill $server_pid 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/health >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:18081/health
+          echo
+          curl -fsS http://127.0.0.1:18081/api >/dev/null
+
+          curl -fsS -u "home:verify-placeholder-host-token" \
+            http://127.0.0.1:18081/v1/hosts/home >/dev/null
+
+          status="$(curl -s -o /tmp/update-response.json -w '%{http_code}' \
+            "http://127.0.0.1:18081/v1/hosts/home/update?dry_run=1&token=verify-placeholder-host-token")"
+          cat /tmp/update-response.json
+          echo
+          test "$status" = "502"
