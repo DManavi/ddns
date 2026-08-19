@@ -116,6 +116,36 @@ a dev stack can never collide with a production one on the same host.
 > `dev` is the last stage in the `Dockerfile`, so a plain `docker build .`
 > produces the development image. Pass `--target runtime` for production.
 
+**Without cloning the repository:** the same image is published to both
+`ghcr.io/dmanavi/ddns` and `dmanavi/ddns` on Docker Hub, tagged with the full
+version (for example `1.20260818.2157`), `major.minor` (the release date),
+`major` and `latest`. Fetch just the two files a container needs and run it
+directly:
+
+```bash
+mkdir ddns && cd ddns
+curl -O https://raw.githubusercontent.com/DManavi/ddns/main/config/ddns.example.yaml
+mv ddns.example.yaml ddns.yaml   # edit: zone, record, provider
+curl -O https://raw.githubusercontent.com/DManavi/ddns/main/.env.example
+mv .env.example .env             # edit: API token, host token
+
+docker run -d --name ddns \
+  --env-file .env \
+  -v "$(pwd)/ddns.yaml:/config/ddns.yaml:ro" \
+  -p 127.0.0.1:8080:8080 \
+  ghcr.io/dmanavi/ddns:latest
+# or dmanavi/ddns:latest — same image, the other registry
+```
+
+Prefer `compose.yaml` for anything longer-lived than a quick check: it adds the
+read-only root filesystem, dropped capabilities and restart policy this plain
+`docker run` does not. It still needs cloning for the file itself, but not for
+an image build — point it at the published image instead of building:
+
+```bash
+DDNS_IMAGE=ghcr.io/dmanavi/ddns:latest docker compose up -d
+```
+
 ### Bare metal
 
 Requires PHP 8.2+ with `curl`, `mbstring` and `xml`. `pcntl` is optional and
@@ -128,6 +158,20 @@ composer install --no-dev
 ./bin/ddns update --all         # one-shot
 ./bin/ddns watch --all          # keep running
 ```
+
+That assumes a clone of this repository. To install from
+[Packagist](https://packagist.org/packages/dmanavi/ddns) instead, without
+cloning anything:
+
+```bash
+composer create-project --no-dev dmanavi/ddns ddns
+cd ddns
+
+./bin/ddns config:init
+```
+
+`create-project` already ran the equivalent of `composer install --no-dev`, so
+there is nothing further to install before `config:init`.
 
 `config:init` asks which provider hosts your zone, what it needs, and which
 name to keep in sync. See [the wizard](#the-wizard) for what it writes and

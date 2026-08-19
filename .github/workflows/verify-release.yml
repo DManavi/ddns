@@ -228,7 +228,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          composer create-project "dmanavi/ddns:v${VERSION}" /tmp/ddns-from-packagist \
+          composer create-project --no-dev "dmanavi/ddns:v${VERSION}" /tmp/ddns-from-packagist \
             --no-interaction --no-progress --prefer-dist
 
       - name: Reports the version it was tagged with
