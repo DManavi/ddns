@@ -5,11 +5,23 @@
 # can block the other, or block release.yml from creating the next release -
 # each is its own run, with its own concurrency group.
 #
+# Woken up two ways. `release: published` fires when a release is made by
+# hand through the GitHub UI - a real user's action, which GitHub is happy to
+# have trigger other workflows. release.yml's own releases do not arrive this
+# way: it creates them with the implicit GITHUB_TOKEN, and GitHub does not
+# let a GITHUB_TOKEN-authored event trigger other workflows, precisely to
+# stop an infinite loop - it just also means this workflow's real trigger
+# would silently never fire. workflow_dispatch is the documented exception
+# (it always starts a run, whoever's token requested it), so release.yml
+# calls this workflow explicitly instead of relying on the event reaching it.
+# `tag` is accepted only so release.yml can dispatch all three publish
+# workflows the same way - Packagist is not told which tag prompted it, since
+# it re-reads the repository rather than a specific release.
+#
 # ---------------------------------------------------------------------------
-# CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
-# does not exist yet, so nothing here runs. Turn it on under Settings ->
-# Secrets and variables -> Actions -> Variables, with RELEASE_ENABLED set to
-# true, once the accounts exist.
+# Gated on the repository variable RELEASE_ENABLED. Set it to `false` (or
+# delete it) under Settings -> Secrets and variables -> Actions -> Variables
+# to turn this workflow back off, e.g. while rotating credentials.
 # ---------------------------------------------------------------------------
 #
 # What it wants before it will do anything useful:
@@ -23,6 +35,12 @@ name: Publish to Packagist
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Unused - accepted so release.yml can dispatch all three publish workflows uniformly."
+        required: false
+        type: string
 
 permissions:
   contents: read

@@ -1479,12 +1479,13 @@ for you.
 
 ### Releases
 
-**Currently switched off.** `.github/workflows/release.yml`,
-`.github/workflows/publish-ghcr.yml`, `.github/workflows/publish-dockerhub.yml`
-and `.github/workflows/publish-packagist.yml` are committed and complete, but
-every job in all four is gated on a repository variable that does not exist,
-so nothing publishes. Set `RELEASE_ENABLED` to `true` under
-*Settings → Secrets and variables → Actions → Variables* to turn them on.
+`.github/workflows/release.yml`, `.github/workflows/publish-ghcr.yml`,
+`.github/workflows/publish-dockerhub.yml` and
+`.github/workflows/publish-packagist.yml` do the whole thing, gated on the
+`RELEASE_ENABLED` repository variable under
+*Settings → Secrets and variables → Actions → Variables*. Set it to `false`
+(or delete it) to turn every job in all four back off, for example while
+rotating credentials.
 
 **Every push to `main`** — a direct push, or landing a pull request by any
 merge strategy — runs `release.yml`, which decides whether to release using
@@ -1520,7 +1521,7 @@ What happens, in order:
    prove the edit landed, and runs the suite at that value.
 2. Commits it to `main` and pushes an annotated `v<version>` tag.
 3. Creates the GitHub release with generated notes.
-4. Publishing the release fires three independent workflow runs:
+4. Explicitly starts three independent workflow runs:
    - `publish-ghcr.yml` pushes `linux/amd64` and `linux/arm64` images to
      `ghcr.io`, tagged `1.20260818.2157`, `1.20260818`, `1` and `latest`.
    - `publish-dockerhub.yml` pushes the same images and tags to Docker Hub,
@@ -1532,6 +1533,15 @@ What happens, in order:
    next one — a Docker Hub problem, for instance, cannot stop `ghcr.io` from
    publishing, which is also why they are not one workflow that pushes to
    both registries in a single step.
+
+   They are started explicitly (`gh workflow run`) rather than left to fire
+   on their own `release: published` trigger, because `release.yml` creates
+   the release with the implicit `GITHUB_TOKEN`, and GitHub does not let a
+   `GITHUB_TOKEN`-authored event start other workflows — the same rule that
+   keeps this workflow from re-triggering itself. `workflow_dispatch` is the
+   documented exception, so that trigger stays on all three as well, both for
+   this and so a publish can be re-run by hand (*Actions → \<workflow\> → Run
+   workflow*) against any past release tag without cutting a new one.
 
 Optional secrets, each of which only makes its own workflow do something:
 

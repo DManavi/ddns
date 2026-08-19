@@ -14,11 +14,22 @@
 # able to stop ghcr.io publishing too, for a registry that needs no
 # credentials of its own to begin with.
 #
+# Woken up two ways. `release: published` fires when a release is made by
+# hand through the GitHub UI - a real user's action, which GitHub is happy to
+# have trigger other workflows. release.yml's own releases do not arrive this
+# way: it creates them with the implicit GITHUB_TOKEN, and GitHub does not
+# let a GITHUB_TOKEN-authored event trigger other workflows, precisely to
+# stop an infinite loop - it just also means this workflow's real trigger
+# would silently never fire. workflow_dispatch is the documented exception
+# (it always starts a run, whoever's token requested it), so release.yml
+# calls this workflow explicitly with the tag it just created instead of
+# relying on the event reaching it. `tag` is what tells the two apart: a
+# release event carries its own, so the input is only read when it doesn't.
+#
 # ---------------------------------------------------------------------------
-# CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
-# does not exist yet, so nothing here runs. Turn it on under Settings ->
-# Secrets and variables -> Actions -> Variables, with RELEASE_ENABLED set to
-# true, once the accounts exist.
+# Gated on the repository variable RELEASE_ENABLED. Set it to `false` (or
+# delete it) under Settings -> Secrets and variables -> Actions -> Variables
+# to turn this workflow back off, e.g. while rotating credentials.
 # ---------------------------------------------------------------------------
 #
 # What it wants before it will do anything useful:
@@ -38,6 +49,12 @@ name: Publish to GitHub Container Registry
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (e.g. v1.20260818.2157). Defaults to the latest release."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -58,11 +75,34 @@ jobs:
       packages: write
 
     steps:
+      # A release event carries its own tag; workflow_dispatch reads the
+      # input instead, falling back to the latest release when it's blank
+      # too - so a manual run with nothing filled in still does something
+      # useful, which is retry the most recent publish.
+      - name: Resolve which release to publish
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$EVENT_TAG" ]; then
+            tag="$EVENT_TAG"
+          elif [ -n "$INPUT_TAG" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$(gh release view --repo "${{ github.repository }}" --json tagName --jq .tagName)"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
         with:
           # The tag, so the image is built from exactly what was released -
           # including the version constant release.yml wrote before tagging.
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ steps.release.outputs.tag }}
 
       # arm64 is emulated, which is slower than the native build and is what
       # makes the image usable on a Raspberry Pi - where a good deal of
@@ -91,7 +131,7 @@ jobs:
         id: tags
         env:
           REPOSITORY: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
           slug="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"

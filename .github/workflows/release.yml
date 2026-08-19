@@ -3,16 +3,16 @@
 # Creates a GitHub release every time main is pushed to - directly, or by
 # merging a pull request - as long as the change is more than docs, chore,
 # ci, style or test tweaks. Publishing the result is somebody else's job:
-# creating the release fires publish-ghcr.yml, publish-dockerhub.yml and
-# publish-packagist.yml, which react to the release being published rather
-# than to anything in this file, so any of the three can succeed, fail or
-# queue independently of the others and of this workflow.
+# after creating the release, the last step explicitly starts publish-ghcr.yml,
+# publish-dockerhub.yml and publish-packagist.yml (see that step for why a
+# release created here cannot just rely on those workflows' own `release:
+# published` trigger), so any of the three can succeed, fail or queue
+# independently of the others and of this workflow.
 #
 # ---------------------------------------------------------------------------
-# CURRENTLY DISABLED. Every job is gated on the repository variable
-# RELEASE_ENABLED, which does not exist yet, so nothing here runs and nothing
-# is published. Turn it on under Settings -> Secrets and variables -> Actions
-# -> Variables, with RELEASE_ENABLED set to true, once the accounts exist.
+# Gated on the repository variable RELEASE_ENABLED. Set it to `false` (or
+# delete it) under Settings -> Secrets and variables -> Actions -> Variables
+# to turn every job here back off, e.g. while rotating credentials.
 # ---------------------------------------------------------------------------
 #
 # What it wants before it will do anything useful:
@@ -226,6 +226,10 @@ jobs:
       # To push the version bump and the tag that points at it, and to
       # create the release itself.
       contents: write
+      # To start the publish workflows with workflow_dispatch afterwards -
+      # see the last step for why that's needed instead of relying on their
+      # `release: published` trigger.
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -329,3 +333,23 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes \
             --verify-tag
+
+      # `gh release create` above used GITHUB_TOKEN, and GitHub does not let a
+      # GITHUB_TOKEN-authored event trigger other workflows - the same rule
+      # that stops this job's own push from re-running this workflow also
+      # means the `release: published` event the publish workflows listen for
+      # never reaches them. workflow_dispatch is the documented exception: it
+      # always starts a run, whoever's token requested it, so the publish
+      # workflows are woken up explicitly instead of relying on an event that
+      # would otherwise never arrive.
+      - name: Fire the publish workflows
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          for workflow in publish-ghcr.yml publish-dockerhub.yml publish-packagist.yml; do
+            gh workflow run "$workflow" --ref main -f "tag=v${VERSION}"
+          done
+
