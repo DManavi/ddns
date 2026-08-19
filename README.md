@@ -1,5 +1,6 @@
 # ddns
 
+[![GitHub](https://img.shields.io/badge/GitHub-DManavi%2Fddns-181717?logo=github&logoColor=white)](https://github.com/DManavi/ddns)
 [![CI](https://github.com/DManavi/ddns/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DManavi/ddns/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FDManavi%2Fddns%2Fmain%2F.github%2Fbadges%2Fcoverage.json)](https://github.com/DManavi/ddns/actions/workflows/ci.yml)
 [![Packagist Version](https://img.shields.io/packagist/v/dmanavi/ddns?label=packagist)](https://packagist.org/packages/dmanavi/ddns)
