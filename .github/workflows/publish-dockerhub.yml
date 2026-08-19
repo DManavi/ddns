@@ -175,6 +175,47 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Repository-level metadata rather than image-level: the description and
+      # category shown on the Docker Hub page live on the repository, not in a
+      # tag's manifest, so there is no `docker build`/`docker push` equivalent
+      # for either - this is the same `/v2/auth/token` + `/v2/repositories/...`
+      # API the Docker Hub UI itself uses. Repeated on every publish rather
+      # than done once by hand: it costs nothing to repeat, and self-heals if
+      # either is ever changed by hand on Docker Hub.
+      - name: Set the Docker Hub description and category
+        if: env.HAS_DOCKERHUB == 'true'
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          repo="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          token="$(curl -sS -X POST https://hub.docker.com/v2/auth/token \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+              '{identifier: $u, secret: $p}')" \
+            | jq -r '.access_token')"
+
+          body="$(jq -n \
+            --arg description 'Self-hosted dynamic DNS server: DigitalOcean, Vultr, Cloudflare, Azure DNS, Route53. HTTP + CLI.' \
+            '{description: $description, categories: ["networking"]}')"
+
+          status="$(curl -sS -o /tmp/dockerhub-repo.json -w '%{http_code}' \
+            -X PATCH "https://hub.docker.com/v2/repositories/${repo}" \
+            --oauth2-bearer "$token" \
+            -H 'Content-Type: application/json' \
+            --data "$body")"
+
+          cat /tmp/dockerhub-repo.json
+          echo
+
+          test "$status" = "200" || {
+            echo "Docker Hub answered $status." >&2
+            exit 1
+          }
+
       - name: Say where it went
         if: env.HAS_DOCKERHUB == 'true'
         run: |
