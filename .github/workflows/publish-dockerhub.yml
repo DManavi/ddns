@@ -175,6 +175,63 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Repository-level metadata rather than image-level: the description and
+      # category shown on the Docker Hub page live on the repository, not in a
+      # tag's manifest, so there is no `docker build`/`docker push` equivalent
+      # for either - this is the same `/v2/auth/token` + `/v2/repositories/...`
+      # API the Docker Hub UI itself uses. Repeated on every publish rather
+      # than done once by hand: it costs nothing to repeat, and self-heals if
+      # either is ever changed by hand on Docker Hub.
+      #
+      # continue-on-error, deliberately: Docker Hub scopes this endpoint
+      # separately from `docker push` - a token good enough to publish the
+      # image can still get a flat 403 "insufficient scope" here, even though
+      # the account itself has full admin rights on the repository (confirmed
+      # live; see forums.docker.com/t/insufficient-scope-for-advanced-image-
+      # management-api/122909 for the same report from someone else's token).
+      # DOCKERHUB_TOKEN needs "Read, Write, Delete" scope, not just "Read &
+      # Write", for this step specifically. A cosmetic metadata update failing
+      # is not a reason to fail the actual publish above; the step still shows
+      # as failed in the run so the gap stays visible until the token is
+      # reissued with the right scope.
+      - name: Set the Docker Hub description and category
+        if: env.HAS_DOCKERHUB == 'true'
+        continue-on-error: true
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          repo="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          token="$(curl -sS -X POST https://hub.docker.com/v2/auth/token \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
+              '{identifier: $u, secret: $p}')" \
+            | jq -r '.access_token')"
+
+          body="$(jq -n \
+            --arg description 'Self-hosted dynamic DNS server: DigitalOcean, Vultr, Cloudflare, Azure DNS, Route53. HTTP + CLI.' \
+            '{description: $description, categories: ["networking"]}')"
+
+          status="$(curl -sS -o /tmp/dockerhub-repo.json -w '%{http_code}' \
+            -X PATCH "https://hub.docker.com/v2/repositories/${repo}" \
+            --oauth2-bearer "$token" \
+            -H 'Content-Type: application/json' \
+            --data "$body")"
+
+          cat /tmp/dockerhub-repo.json
+          echo
+
+          test "$status" = "200" || {
+            echo "Docker Hub answered $status." >&2
+            echo "If that's 403 insufficient scope: DOCKERHUB_TOKEN needs to be" >&2
+            echo "reissued on Docker Hub with \"Read, Write, Delete\" scope - the" >&2
+            echo "\"Read & Write\" scope docker push needs is not enough for this." >&2
+            exit 1
+          }
+
       - name: Say where it went
         if: env.HAS_DOCKERHUB == 'true'
         run: |
