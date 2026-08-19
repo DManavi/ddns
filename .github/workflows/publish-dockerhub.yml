@@ -175,13 +175,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Repository-level metadata rather than image-level: the description and
-      # category shown on the Docker Hub page live on the repository, not in a
-      # tag's manifest, so there is no `docker build`/`docker push` equivalent
-      # for either - this is the same `/v2/auth/token` + `/v2/repositories/...`
-      # API the Docker Hub UI itself uses. Repeated on every publish rather
-      # than done once by hand: it costs nothing to repeat, and self-heals if
-      # either is ever changed by hand on Docker Hub.
+      # Repository-level metadata rather than image-level: the Overview shown
+      # on the Docker Hub page is the same `/v2/auth/token` +
+      # `/v2/repositories/...` API the Docker Hub UI itself uses to set
+      # `full_description`, and there is no `docker build`/`docker push`
+      # equivalent for it. Runs on every publish so the page never drifts from
+      # the README, the same reasoning as GHCR's own repository-linked README
+      # display.
+      #
+      # Docker Hub caps full_description at 25,000 bytes; this README is
+      # bigger than that, so - only when it doesn't fit - it is cut to the
+      # last full line under the limit, with a note and a link to the
+      # complete README ahead of the content rather than only after it is
+      # already cut off partway through some unrelated section.
       #
       # continue-on-error, deliberately: Docker Hub scopes this endpoint
       # separately from `docker push` - a token good enough to publish the
@@ -194,7 +200,7 @@ jobs:
       # is not a reason to fail the actual publish above; the step still shows
       # as failed in the run so the gap stays visible until the token is
       # reissued with the right scope.
-      - name: Set the Docker Hub description and category
+      - name: Set the Docker Hub overview from the README
         if: env.HAS_DOCKERHUB == 'true'
         continue-on-error: true
         env:
@@ -205,15 +211,41 @@ jobs:
           set -euo pipefail
           repo="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
 
+          limit=25000
+          notice="$(printf '> Full documentation - configuration reference, HTTP API, provider setup - continues in the README on GitHub: https://github.com/%s#readme. This overview is trimmed to fit a %s byte limit.' "$REPOSITORY" "$limit")"
+          closing=$'\n\n---\n\n*(truncated - see the link above for the rest)*'
+
+          readme_size="$(wc -c < README.md)"
+
+          if [ "$readme_size" -le "$limit" ]; then
+            overview="$(cat README.md)"
+          else
+            # 2 bytes reserved for the blank line separating the notice from
+            # the README content that follows it.
+            budget=$((limit - ${#notice} - 2 - ${#closing}))
+            # head -n -1 always drops the last line, even a complete one, so a
+            # cut that landed exactly on a newline never has to be told apart
+            # from one that landed mid-line - both are handled the same way.
+            truncated="$(head -c "$budget" README.md | head -n -1)"
+
+            # An odd number of ``` fences means the cut landed inside one, and
+            # everything after - the closing note included - would otherwise
+            # render as unstyled text trapped in that unclosed code block.
+            fence_count="$(grep -o '```' <<< "$truncated" | wc -l)"
+            if [ $((fence_count % 2)) -ne 0 ]; then
+              truncated="${truncated}"$'\n```'
+            fi
+
+            overview="${notice}"$'\n\n'"${truncated}${closing}"
+          fi
+
           token="$(curl -sS -X POST https://hub.docker.com/v2/auth/token \
             -H 'Content-Type: application/json' \
             --data "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" \
               '{identifier: $u, secret: $p}')" \
             | jq -r '.access_token')"
 
-          body="$(jq -n \
-            --arg description 'Self-hosted dynamic DNS server: DigitalOcean, Vultr, Cloudflare, Azure DNS, Route53. HTTP + CLI.' \
-            '{description: $description, categories: ["networking"]}')"
+          body="$(jq -n --arg overview "$overview" '{full_description: $overview}')"
 
           status="$(curl -sS -o /tmp/dockerhub-repo.json -w '%{http_code}' \
             -X PATCH "https://hub.docker.com/v2/repositories/${repo}" \
