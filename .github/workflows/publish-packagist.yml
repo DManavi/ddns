@@ -1,0 +1,84 @@
+# Publish to Packagist.
+#
+# Runs on its own, as a separate workflow run from the Docker image's,
+# whenever release.yml publishes a GitHub release. Neither publish workflow
+# can block the other, or block release.yml from creating the next release -
+# each is its own run, with its own concurrency group.
+#
+# ---------------------------------------------------------------------------
+# CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
+# does not exist yet, so nothing here runs. Turn it on under Settings ->
+# Secrets and variables -> Actions -> Variables, with RELEASE_ENABLED set to
+# true, once the accounts exist.
+# ---------------------------------------------------------------------------
+#
+# What it wants before it will do anything useful:
+#
+#   RELEASE_ENABLED     variable   `true`, or the job skips
+#   PACKAGIST_USERNAME  secret     omit to rely on Packagist's GitHub App
+#   PACKAGIST_TOKEN     secret     from https://packagist.org/profile/
+
+name: Publish to Packagist
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-packagist
+  cancel-in-progress: false
+
+jobs:
+  packagist:
+    name: Notify Packagist
+    runs-on: ubuntu-latest
+    if: vars.RELEASE_ENABLED == 'true'
+
+    env:
+      HAS_PACKAGIST: ${{ secrets.PACKAGIST_USERNAME != '' }}
+
+    steps:
+      # Packagist reads the tag from GitHub itself, so this only tells it to
+      # look now rather than whenever it next gets round to it. With the
+      # Packagist GitHub App installed the hook already fires and this is a
+      # harmless second nudge - which is why it skips, rather than fails, when
+      # there are no credentials for it.
+      #
+      # There is deliberately no `version` field in composer.json: Packagist
+      # derives the version from the tag, and a field that disagreed with the
+      # tag would be believed over it.
+      - name: Ask Packagist to update
+        if: env.HAS_PACKAGIST == 'true'
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          status="$(curl -sS -o /tmp/packagist.json -w '%{http_code}' \
+            -X POST \
+            -H 'Content-Type: application/json' \
+            --data "{\"repository\":{\"url\":\"https://github.com/${REPOSITORY}\"}}" \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}")"
+
+          cat /tmp/packagist.json
+          echo
+
+          test "$status" = "202" || {
+            echo "Packagist answered $status." >&2
+            exit 1
+          }
+
+      - name: Say why nothing happened
+        if: env.HAS_PACKAGIST != 'true'
+        run: |
+          {
+            echo "### Packagist"
+            echo
+            echo "No PACKAGIST_USERNAME is set, so nothing was pushed."
+            echo "Packagist picks the tag up on its own when its GitHub App is installed."
+          } >> "$GITHUB_STEP_SUMMARY"

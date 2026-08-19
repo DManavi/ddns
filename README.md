@@ -1479,57 +1479,70 @@ for you.
 
 ### Releases
 
-**Currently switched off.** `.github/workflows/release.yml` is committed and
-complete, but every job is gated on a repository variable that does not exist,
-so nothing publishes. Set `RELEASE_ENABLED` to `true` under *Settings → Secrets
-and variables → Actions → Variables* to turn it on.
+**Currently switched off.** `.github/workflows/release.yml`,
+`.github/workflows/publish-docker.yml` and
+`.github/workflows/publish-packagist.yml` are committed and complete, but
+every job in all three is gated on a repository variable that does not
+exist, so nothing publishes. Set `RELEASE_ENABLED` to `true` under
+*Settings → Secrets and variables → Actions → Variables* to turn them on.
 
-A merged pull request is released at the highest version its
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) ask for.
-Both the title and the individual commits are read, because either may be the
-one that survives — a squash merge keeps the title, a merge commit keeps the
-commits.
+**Every push to `main`** — a direct push, or landing a pull request by any
+merge strategy — runs `release.yml`, which decides whether to release using
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), the
+same as before: it reads the commits the push actually introduced (a merge
+commit itself is excluded, so a "create a merge commit" merge is read the
+same way a squash or rebase merge is).
 
-| In the title or any commit | Bump |
+| Any commit the push introduced | Release? |
 | --- | --- |
-| `!` before the colon, or a `BREAKING CHANGE:` footer | major |
-| `feat` | minor |
-| `fix`, `perf`, `refactor`, `build`, `revert`, or a type it does not recognise | patch |
-| only `docs`, `chore`, `ci`, `style`, `test` | **no release** |
+| `!` before the colon, or a `BREAKING CHANGE:` footer | yes |
+| `feat` | yes |
+| `fix`, `perf`, `refactor`, `build`, `revert`, or a type it does not recognise | yes |
+| only `docs`, `chore`, `ci`, `style`, `test` | **no** |
 
-A hand-run release — *Actions → Release → Run workflow* — is always a patch.
-There are no commits to read an intention from, and inventing a larger bump
-from silence would be worse than the smallest one that ships.
+A hand-run release — *Actions → Release → Run workflow* — always releases.
+There are no commits to read an intention from, and inventing "nothing
+changed" from silence would be worse than releasing anyway.
 
-The rules live in `.github/scripts/next-version.php`. It sits outside `src/`,
-where PHPStan and PHPUnit cannot reach it, so it carries its own cases and
-`composer check`'s CI equivalent runs `--self-test` on every pull request —
-otherwise the logic would go unexercised until the first release depended on it.
+**The version is always `1.<date>.<time>`, in UTC** — for example
+`1.20260818.2157` for a release made at 21:57 UTC on 18 August 2026. Major is
+fixed at `1`; the table above only ever decides *whether* a release happens,
+never what it's called. The rules for that decision live in
+`.github/scripts/next-version.php`, unchanged from when they drove the
+version number directly: it sits outside `src/`, where PHPStan and PHPUnit
+cannot reach it, so it carries its own cases and `composer check`'s CI
+equivalent runs `--self-test` on every pull request — otherwise the logic
+would go unexercised until the first release depended on it.
 
-What a release does, in order:
+What happens, in order:
 
-1. Rewrites `Bootstrap::VERSION`, reads it back through PHP to prove the edit
-   landed, and runs the suite at that value.
+1. `release.yml` rewrites `Bootstrap::VERSION`, reads it back through PHP to
+   prove the edit landed, and runs the suite at that value.
 2. Commits it to `main` and pushes an annotated `v<version>` tag.
 3. Creates the GitHub release with generated notes.
-4. Pushes `linux/amd64` and `linux/arm64` images to `ghcr.io` and, if the
-   credentials exist, Docker Hub — tagged `1.2.3`, `1.2`, `1` and `latest`.
-5. Asks Packagist to update.
+4. Publishing the release fires two independent workflow runs:
+   - `publish-docker.yml` pushes `linux/amd64` and `linux/arm64` images to
+     `ghcr.io` and, if the credentials exist, Docker Hub — tagged
+     `1.20260818.2157`, `1.20260818`, `1` and `latest`.
+   - `publish-packagist.yml` asks Packagist to update.
 
-Optional secrets, each of which only makes its own step do something:
+   Either can succeed, fail, or queue behind a previous release without
+   affecting the other, or blocking `release.yml` from creating the next one.
 
-| Secret | Without it |
-| --- | --- |
-| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | publishes to `ghcr.io` only |
-| `PACKAGIST_USERNAME`, `PACKAGIST_TOKEN` | relies on Packagist's GitHub App to notice the tag |
+Optional secrets, each of which only makes its own workflow do something:
+
+| Secret | Used by | Without it |
+| --- | --- | --- |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `publish-docker.yml` | publishes to `ghcr.io` only |
+| `PACKAGIST_USERNAME`, `PACKAGIST_TOKEN` | `publish-packagist.yml` | relies on Packagist's GitHub App to notice the tag |
 
 `composer.json` deliberately has **no `version` field**: Packagist derives the
 version from the tag, and a field that disagreed with the tag would be believed
 over it.
 
-Pushing to `main` needs `contents: write`, which the workflow grants only to the
-job that tags. If you later protect `main`, that job needs an exemption or the
-release will fail at the push.
+Pushing to `main` needs `contents: write`, which `release.yml` grants only to
+the job that tags. If you later protect `main`, that job needs an exemption or
+the release will fail at the push.
 
 ## Not implemented
 

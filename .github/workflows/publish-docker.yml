@@ -1,0 +1,173 @@
+# Publish the Docker image.
+#
+# Runs on its own, as a separate workflow run from Packagist's, whenever
+# release.yml publishes a GitHub release. Neither publish workflow can block
+# the other, or block release.yml from creating the next release - each is
+# its own run, with its own concurrency group.
+#
+# ---------------------------------------------------------------------------
+# CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
+# does not exist yet, so nothing here runs. Turn it on under Settings ->
+# Secrets and variables -> Actions -> Variables, with RELEASE_ENABLED set to
+# true, once the accounts exist.
+# ---------------------------------------------------------------------------
+#
+# What it wants before it will do anything useful:
+#
+#   RELEASE_ENABLED     variable   `true`, or the job skips
+#   DOCKERHUB_USERNAME  secret     omit to publish only to GHCR
+#   DOCKERHUB_TOKEN     secret     an access token, not the account password
+#
+# The Docker Hub login and tag steps skip themselves when the secret is
+# absent, so turning the variable on with neither set still publishes to
+# ghcr.io, which needs no credentials of its own.
+#
+# Tags are built directly from the release's version (full version,
+# major.minor, major, latest) rather than parsed by docker/metadata-action's
+# `type=semver` pattern: that pattern enforces strict SemVer, which forbids a
+# leading zero in any component, and the time-based patch release.yml
+# produces (e.g. `0805` for 08:05 UTC) has one roughly forty percent of the
+# time. A pattern match that silently drops a tag on forty percent of
+# releases is worse than not using the pattern at all.
+
+name: Publish Docker image
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+# Publishes queue in order rather than racing - protects the `latest` tag
+# from a release that finishes building before an earlier one does - without
+# ever blocking release.yml from tagging the next release.
+concurrency:
+  group: publish-docker
+  cancel-in-progress: false
+
+jobs:
+  docker:
+    name: Build and push
+    runs-on: ubuntu-latest
+    if: vars.RELEASE_ENABLED == 'true'
+
+    permissions:
+      contents: read
+      # To push to ghcr.io under this repository's owner.
+      packages: write
+
+    # The `secrets` context cannot be used in an `if:`, but it can be used
+    # here, and `env` can. This is the usual way to make a step conditional on
+    # a credential existing.
+    env:
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The tag, so the image is built from exactly what was released -
+          # including the version constant release.yml wrote before tagging.
+          ref: ${{ github.event.release.tag_name }}
+
+      # arm64 is emulated, which is slower than the native build and is what
+      # makes the image usable on a Raspberry Pi - where a good deal of
+      # self-hosted dynamic DNS actually runs.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # ghcr.io always; Docker Hub only when there is an account to push to.
+      # Lowercased, because a repository owner may be capitalised and a
+      # registry reference may not be.
+      - name: Work out the image names
+        id: images
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          slug="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          # A multi-line output needs the delimiter form; a bare newline would
+          # be read as the end of the value.
+          {
+            echo 'names<<IMAGES'
+            echo "ghcr.io/${slug}"
+            if [ "$HAS_DOCKERHUB" = "true" ]; then
+              echo "${slug}"
+            fi
+            echo 'IMAGES'
+          } >> "$GITHUB_OUTPUT"
+
+      # 1.20260818.2157, 1.20260818 and 1 all move to the newest release that
+      # matches, so a deployment can choose how much change it is willing to
+      # accept. See the top of this file for why these are built by hand
+      # rather than matched as semver.
+      - name: Work out the tags
+        id: tags
+        env:
+          IMAGES: ${{ steps.images.outputs.names }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"   # 1.20260818.2157
+          date="${version%.*}" # 1.20260818
+          major="${date%%.*}"  # 1
+
+          {
+            echo 'tags<<TAGS'
+            while IFS= read -r image; do
+              [ -n "$image" ] || continue
+              echo "${image}:${version}"
+              echo "${image}:${date}"
+              echo "${image}:${major}"
+              echo "${image}:latest"
+            done <<< "$IMAGES"
+            echo 'TAGS'
+          } >> "$GITHUB_OUTPUT"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # `dev` is the last stage in the Dockerfile, so the target has to be
+      # named explicitly or this would publish the development image.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=ddns
+            org.opencontainers.image.description=Self-hosted dynamic DNS server
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Say where it went
+        run: |
+          {
+            echo "### Image"
+            echo
+            echo '```'
+            printf '%s\n' '${{ steps.tags.outputs.tags }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
