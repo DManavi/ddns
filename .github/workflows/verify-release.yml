@@ -192,9 +192,13 @@ jobs:
           # Same placeholder-credential rejection as the CLI, through the HTTP
           # front-end instead - 502 is what AuthenticationFailed maps to. The
           # token travels as the documented query parameter this time, to
-          # exercise a second transport.
+          # exercise a second transport. An explicit test-net address (the
+          # same one the README's own examples use) is required: with none
+          # given, the source address is used instead, and that is Docker's
+          # bridge gateway here - a private address the server correctly
+          # refuses to publish before ever reaching the provider.
           status="$(curl -s -o /tmp/update-response.json -w '%{http_code}' \
-            "http://127.0.0.1:18080/v1/hosts/home/update?dry_run=1&token=verify-placeholder-host-token")"
+            "http://127.0.0.1:18080/v1/hosts/home/update?dry_run=1&ip=203.0.113.7&token=verify-placeholder-host-token")"
           cat /tmp/update-response.json
           echo
           test "$status" = "502"
@@ -224,7 +228,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          composer create-project "dmanavi/ddns:v${VERSION}" /tmp/ddns-from-packagist \
+          composer create-project --no-dev "dmanavi/ddns:v${VERSION}" /tmp/ddns-from-packagist \
             --no-interaction --no-progress --prefer-dist
 
       - name: Reports the version it was tagged with
@@ -306,8 +310,12 @@ jobs:
           curl -fsS -u "home:verify-placeholder-host-token" \
             http://127.0.0.1:18081/v1/hosts/home >/dev/null
 
+          # An explicit test-net address is required here too: with none
+          # given the source address is used, and PHP's built-in server sees
+          # 127.0.0.1 - a loopback address the server correctly refuses to
+          # publish before ever reaching the provider.
           status="$(curl -s -o /tmp/update-response.json -w '%{http_code}' \
-            "http://127.0.0.1:18081/v1/hosts/home/update?dry_run=1&token=verify-placeholder-host-token")"
+            "http://127.0.0.1:18081/v1/hosts/home/update?dry_run=1&ip=203.0.113.7&token=verify-placeholder-host-token")"
           cat /tmp/update-response.json
           echo
           test "$status" = "502"
