@@ -183,11 +183,17 @@ jobs:
       # the README, the same reasoning as GHCR's own repository-linked README
       # display.
       #
-      # Docker Hub caps full_description at 25,000 bytes; this README is
-      # bigger than that, so - only when it doesn't fit - it is cut to the
-      # last full line under the limit, with a note and a link to the
-      # complete README ahead of the content rather than only after it is
-      # already cut off partway through some unrelated section.
+      # Docker Hub caps full_description at 25,000 bytes. Rather than a blind
+      # byte-count cut wherever that happens to land - mid-code-block, mid-
+      # table, anywhere - this stops right before "### Bare metal": everything
+      # from the top through the Docker Quick Start is what a Docker Hub
+      # visitor actually wants, and bare metal, Apache, shared hosting, the
+      # full configuration reference and the rest are either irrelevant to
+      # someone looking at a container image or better read on GitHub anyway.
+      # That cut sits at roughly a quarter of the byte limit, so there is no
+      # need to also trim within it - only the closing link is added. Neither
+      # this workflow nor the repository ever holds a separate trimmed copy;
+      # it is produced here each time from the one README.md that exists.
       #
       # continue-on-error, deliberately: Docker Hub scopes this endpoint
       # separately from `docker push` - a token good enough to publish the
@@ -212,31 +218,18 @@ jobs:
           repo="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
 
           limit=25000
-          notice="$(printf '> Full documentation - configuration reference, HTTP API, provider setup - continues in the README on GitHub: https://github.com/%s#readme. This overview is trimmed to fit a %s byte limit.' "$REPOSITORY" "$limit")"
-          closing=$'\n\n---\n\n*(truncated - see the link above for the rest)*'
+          readme_head="$(awk '/^### Bare metal/ { exit } { print }' README.md)"
+          closing="$(printf 'The rest of the documentation - configuration reference, HTTP API, CLI, provider setup, security notes and more - is in the full README on GitHub: https://github.com/%s#readme' "$REPOSITORY")"
+          overview="${readme_head}"$'\n\n---\n\n'"${closing}"
 
-          readme_size="$(wc -c < README.md)"
-
-          if [ "$readme_size" -le "$limit" ]; then
-            overview="$(cat README.md)"
-          else
-            # 2 bytes reserved for the blank line separating the notice from
-            # the README content that follows it.
-            budget=$((limit - ${#notice} - 2 - ${#closing}))
-            # head -n -1 always drops the last line, even a complete one, so a
-            # cut that landed exactly on a newline never has to be told apart
-            # from one that landed mid-line - both are handled the same way.
-            truncated="$(head -c "$budget" README.md | head -n -1)"
-
-            # An odd number of ``` fences means the cut landed inside one, and
-            # everything after - the closing note included - would otherwise
-            # render as unstyled text trapped in that unclosed code block.
-            fence_count="$(grep -o '```' <<< "$truncated" | wc -l)"
-            if [ $((fence_count % 2)) -ne 0 ]; then
-              truncated="${truncated}"$'\n```'
-            fi
-
-            overview="${notice}"$'\n\n'"${truncated}${closing}"
+          # Only reachable if the section before "### Bare metal" ever grows
+          # past the limit on its own - not expected, but the API call would
+          # otherwise be rejected outright rather than publishing a shorter
+          # overview.
+          overview_size="$(printf '%s' "$overview" | wc -c)"
+          if [ "$overview_size" -gt "$limit" ]; then
+            echo "Overview is ${overview_size} bytes, over the ${limit} limit - truncating further." >&2
+            overview="$(printf '%s' "$overview" | head -c "$limit")"
           fi
 
           token="$(curl -sS -X POST https://hub.docker.com/v2/auth/token \
@@ -245,13 +238,13 @@ jobs:
               '{identifier: $u, secret: $p}')" \
             | jq -r '.access_token')"
 
-          body="$(jq -n --arg overview "$overview" '{full_description: $overview}')"
+          request_body="$(jq -n --arg overview "$overview" '{full_description: $overview}')"
 
           status="$(curl -sS -o /tmp/dockerhub-repo.json -w '%{http_code}' \
             -X PATCH "https://hub.docker.com/v2/repositories/${repo}" \
             --oauth2-bearer "$token" \
             -H 'Content-Type: application/json' \
-            --data "$body")"
+            --data "$request_body")"
 
           cat /tmp/dockerhub-repo.json
           echo
