@@ -1480,10 +1480,10 @@ for you.
 ### Releases
 
 **Currently switched off.** `.github/workflows/release.yml`,
-`.github/workflows/publish-docker.yml` and
-`.github/workflows/publish-packagist.yml` are committed and complete, but
-every job in all three is gated on a repository variable that does not
-exist, so nothing publishes. Set `RELEASE_ENABLED` to `true` under
+`.github/workflows/publish-ghcr.yml`, `.github/workflows/publish-dockerhub.yml`
+and `.github/workflows/publish-packagist.yml` are committed and complete, but
+every job in all four is gated on a repository variable that does not exist,
+so nothing publishes. Set `RELEASE_ENABLED` to `true` under
 *Settings → Secrets and variables → Actions → Variables* to turn them on.
 
 **Every push to `main`** — a direct push, or landing a pull request by any
@@ -1520,21 +1520,28 @@ What happens, in order:
    prove the edit landed, and runs the suite at that value.
 2. Commits it to `main` and pushes an annotated `v<version>` tag.
 3. Creates the GitHub release with generated notes.
-4. Publishing the release fires two independent workflow runs:
-   - `publish-docker.yml` pushes `linux/amd64` and `linux/arm64` images to
-     `ghcr.io` and, if the credentials exist, Docker Hub — tagged
-     `1.20260818.2157`, `1.20260818`, `1` and `latest`.
+4. Publishing the release fires three independent workflow runs:
+   - `publish-ghcr.yml` pushes `linux/amd64` and `linux/arm64` images to
+     `ghcr.io`, tagged `1.20260818.2157`, `1.20260818`, `1` and `latest`.
+   - `publish-dockerhub.yml` pushes the same images and tags to Docker Hub,
+     if the credentials exist.
    - `publish-packagist.yml` asks Packagist to update.
 
-   Either can succeed, fail, or queue behind a previous release without
-   affecting the other, or blocking `release.yml` from creating the next one.
+   Any of the three can succeed, fail, or queue behind a previous release
+   without affecting the others, or blocking `release.yml` from creating the
+   next one — a Docker Hub problem, for instance, cannot stop `ghcr.io` from
+   publishing, which is also why they are not one workflow that pushes to
+   both registries in a single step.
 
 Optional secrets, each of which only makes its own workflow do something:
 
 | Secret | Used by | Without it |
 | --- | --- | --- |
-| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `publish-docker.yml` | publishes to `ghcr.io` only |
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | `publish-dockerhub.yml` | that workflow skips entirely |
 | `PACKAGIST_USERNAME`, `PACKAGIST_TOKEN` | `publish-packagist.yml` | relies on Packagist's GitHub App to notice the tag |
+
+`publish-ghcr.yml` needs no secret of its own — `ghcr.io` publishes with the
+implicit `GITHUB_TOKEN` as soon as `RELEASE_ENABLED` is on.
 
 `composer.json` deliberately has **no `version` field**: Packagist derives the
 version from the tag, and a field that disagreed with the tag would be believed

@@ -1,0 +1,155 @@
+# Publish the Docker image to Docker Hub.
+#
+# Runs on its own, as a separate workflow run from GHCR's and Packagist's,
+# whenever release.yml publishes a GitHub release. None of the publish
+# workflows can block each other, or block release.yml from creating the
+# next release - each is its own run, with its own concurrency group.
+#
+# Split from the GHCR workflow rather than sharing one build-and-push step
+# with it - a single `docker buildx build --push` pushing tags on two
+# registries fails as a whole if either registry rejects it, so a problem
+# here would otherwise be able to stop ghcr.io publishing too, for a
+# registry that needs no credentials of its own to begin with.
+#
+# ---------------------------------------------------------------------------
+# CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
+# does not exist yet, so nothing here runs. Turn it on under Settings ->
+# Secrets and variables -> Actions -> Variables, with RELEASE_ENABLED set to
+# true, once the accounts exist.
+# ---------------------------------------------------------------------------
+#
+# What it wants before it will do anything useful:
+#
+#   RELEASE_ENABLED     variable   `true`, or the job skips
+#   DOCKERHUB_USERNAME  secret     omit to skip this workflow entirely
+#   DOCKERHUB_TOKEN     secret     an access token, not the account password
+#
+# Tags are built directly from the release's version (full version,
+# major.minor, major, latest) rather than parsed by docker/metadata-action's
+# `type=semver` pattern: that pattern enforces strict SemVer, which forbids a
+# leading zero in any component, and the time-based patch release.yml
+# produces (e.g. `0805` for 08:05 UTC) has one roughly forty percent of the
+# time. A pattern match that silently drops a tag on forty percent of
+# releases is worse than not using the pattern at all.
+
+name: Publish to Docker Hub
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-dockerhub
+  cancel-in-progress: false
+
+jobs:
+  dockerhub:
+    name: Build and push
+    runs-on: ubuntu-latest
+    if: vars.RELEASE_ENABLED == 'true'
+
+    # The `secrets` context cannot be used in an `if:`, but it can be used
+    # here, and `env` can. This is the usual way to make a step conditional on
+    # a credential existing - and here, every step after checkout.
+    env:
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        if: env.HAS_DOCKERHUB == 'true'
+        with:
+          # The tag, so the image is built from exactly what was released -
+          # including the version constant release.yml wrote before tagging.
+          ref: ${{ github.event.release.tag_name }}
+
+      # arm64 is emulated, which is slower than the native build and is what
+      # makes the image usable on a Raspberry Pi - where a good deal of
+      # self-hosted dynamic DNS actually runs.
+      - name: Set up QEMU
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Lowercased, because a repository owner may be capitalised and a
+      # Docker Hub repository name may not be.
+      #
+      # 1.20260818.2157, 1.20260818 and 1 all move to the newest release that
+      # matches, so a deployment can choose how much change it is willing to
+      # accept. See the top of this file for why these are built by hand
+      # rather than matched as semver.
+      - name: Work out the tags
+        if: env.HAS_DOCKERHUB == 'true'
+        id: tags
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          image="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+
+          version="${TAG#v}"   # 1.20260818.2157
+          date="${version%.*}" # 1.20260818
+          major="${date%%.*}"  # 1
+
+          {
+            echo 'tags<<TAGS'
+            echo "${image}:${version}"
+            echo "${image}:${date}"
+            echo "${image}:${major}"
+            echo "${image}:latest"
+            echo 'TAGS'
+          } >> "$GITHUB_OUTPUT"
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # `dev` is the last stage in the Dockerfile, so the target has to be
+      # named explicitly or this would publish the development image.
+      - name: Build and push
+        if: env.HAS_DOCKERHUB == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=ddns
+            org.opencontainers.image.description=Self-hosted dynamic DNS server
+            org.opencontainers.image.version=${{ steps.tags.outputs.version }}
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Say where it went
+        if: env.HAS_DOCKERHUB == 'true'
+        run: |
+          {
+            echo "### Image"
+            echo
+            echo '```'
+            printf '%s\n' '${{ steps.tags.outputs.tags }}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Say why nothing happened
+        if: env.HAS_DOCKERHUB != 'true'
+        run: |
+          {
+            echo "### Docker Hub"
+            echo
+            echo "No DOCKERHUB_USERNAME is set, so nothing was pushed."
+          } >> "$GITHUB_STEP_SUMMARY"

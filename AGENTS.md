@@ -249,14 +249,17 @@ needs pcov or Xdebug — `composer check` deliberately leaves it out, because
 without a driver PHPUnit silently measures nothing.
 
 The release and publish workflows are committed but **switched off**: every
-job in `release.yml`, `publish-docker.yml` and `publish-packagist.yml` is
-gated on a `RELEASE_ENABLED` repository variable that does not exist yet.
-`release.yml` rewrites `Bootstrap::VERSION` before tagging — so if you rename
-that constant, it has to change with it. CI checks the constant is still in
-the shape the release rewrites, rather than letting a release be where that is
-discovered. Publishing to ghcr.io, Docker Hub and Packagist happens in the
-other two workflows, each its own run triggered by the GitHub release
-`release.yml` creates, not by anything in the same job.
+job in `release.yml`, `publish-ghcr.yml`, `publish-dockerhub.yml` and
+`publish-packagist.yml` is gated on a `RELEASE_ENABLED` repository variable
+that does not exist yet. `release.yml` rewrites `Bootstrap::VERSION` before
+tagging — so if you rename that constant, it has to change with it. CI checks
+the constant is still in the shape the release rewrites, rather than letting a
+release be where that is discovered. Publishing to ghcr.io, Docker Hub and
+Packagist happens in the other three workflows, each its own run triggered by
+the GitHub release `release.yml` creates, not by anything in the same job —
+ghcr.io and Docker Hub are two of those rather than one workflow pushing to
+both, so a Docker Hub credential problem cannot also stop ghcr.io, which needs
+no credentials of its own.
 
 None of the workflow files are covered by the PHP toolchain. `actionlint` with
 `shellcheck` is what catches mistakes in them; both are worth running by hand

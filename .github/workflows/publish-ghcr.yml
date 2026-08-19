@@ -1,9 +1,18 @@
-# Publish the Docker image.
+# Publish the Docker image to GitHub Container Registry.
 #
-# Runs on its own, as a separate workflow run from Packagist's, whenever
-# release.yml publishes a GitHub release. Neither publish workflow can block
-# the other, or block release.yml from creating the next release - each is
-# its own run, with its own concurrency group.
+# Runs on its own, as a separate workflow run from Docker Hub's and
+# Packagist's, whenever release.yml publishes a GitHub release. None of the
+# publish workflows can block each other, or block release.yml from creating
+# the next release - each is its own run, with its own concurrency group.
+#
+# ghcr.io needs nothing beyond the implicit GITHUB_TOKEN, so this workflow
+# has no optional secret to skip around: with RELEASE_ENABLED on, it always
+# publishes. That is also why it is split from Docker Hub's workflow rather
+# than sharing one build-and-push step with it - a single `docker buildx
+# build --push` pushing tags on two registries fails as a whole if either
+# registry rejects it, so a Docker Hub credential problem would otherwise be
+# able to stop ghcr.io publishing too, for a registry that needs no
+# credentials of its own to begin with.
 #
 # ---------------------------------------------------------------------------
 # CURRENTLY DISABLED. Gated on the repository variable RELEASE_ENABLED, which
@@ -14,13 +23,7 @@
 #
 # What it wants before it will do anything useful:
 #
-#   RELEASE_ENABLED     variable   `true`, or the job skips
-#   DOCKERHUB_USERNAME  secret     omit to publish only to GHCR
-#   DOCKERHUB_TOKEN     secret     an access token, not the account password
-#
-# The Docker Hub login and tag steps skip themselves when the secret is
-# absent, so turning the variable on with neither set still publishes to
-# ghcr.io, which needs no credentials of its own.
+#   RELEASE_ENABLED   variable   `true`, or the job skips
 #
 # Tags are built directly from the release's version (full version,
 # major.minor, major, latest) rather than parsed by docker/metadata-action's
@@ -30,7 +33,7 @@
 # time. A pattern match that silently drops a tag on forty percent of
 # releases is worse than not using the pattern at all.
 
-name: Publish Docker image
+name: Publish to GitHub Container Registry
 
 on:
   release:
@@ -39,15 +42,12 @@ on:
 permissions:
   contents: read
 
-# Publishes queue in order rather than racing - protects the `latest` tag
-# from a release that finishes building before an earlier one does - without
-# ever blocking release.yml from tagging the next release.
 concurrency:
-  group: publish-docker
+  group: publish-ghcr
   cancel-in-progress: false
 
 jobs:
-  docker:
+  ghcr:
     name: Build and push
     runs-on: ubuntu-latest
     if: vars.RELEASE_ENABLED == 'true'
@@ -56,12 +56,6 @@ jobs:
       contents: read
       # To push to ghcr.io under this repository's owner.
       packages: write
-
-    # The `secrets` context cannot be used in an `if:`, but it can be used
-    # here, and `env` can. This is the usual way to make a step conditional on
-    # a credential existing.
-    env:
-      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -86,35 +80,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Log in to Docker Hub
-        if: env.HAS_DOCKERHUB == 'true'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # ghcr.io always; Docker Hub only when there is an account to push to.
       # Lowercased, because a repository owner may be capitalised and a
       # registry reference may not be.
-      - name: Work out the image names
-        id: images
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          slug="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-
-          # A multi-line output needs the delimiter form; a bare newline would
-          # be read as the end of the value.
-          {
-            echo 'names<<IMAGES'
-            echo "ghcr.io/${slug}"
-            if [ "$HAS_DOCKERHUB" = "true" ]; then
-              echo "${slug}"
-            fi
-            echo 'IMAGES'
-          } >> "$GITHUB_OUTPUT"
-
+      #
       # 1.20260818.2157, 1.20260818 and 1 all move to the newest release that
       # matches, so a deployment can choose how much change it is willing to
       # accept. See the top of this file for why these are built by hand
@@ -122,23 +90,23 @@ jobs:
       - name: Work out the tags
         id: tags
         env:
-          IMAGES: ${{ steps.images.outputs.names }}
+          REPOSITORY: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          slug="$(printf '%s' "$REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          image="ghcr.io/${slug}"
+
           version="${TAG#v}"   # 1.20260818.2157
           date="${version%.*}" # 1.20260818
           major="${date%%.*}"  # 1
 
           {
             echo 'tags<<TAGS'
-            while IFS= read -r image; do
-              [ -n "$image" ] || continue
-              echo "${image}:${version}"
-              echo "${image}:${date}"
-              echo "${image}:${major}"
-              echo "${image}:latest"
-            done <<< "$IMAGES"
+            echo "${image}:${version}"
+            echo "${image}:${date}"
+            echo "${image}:${major}"
+            echo "${image}:latest"
             echo 'TAGS'
           } >> "$GITHUB_OUTPUT"
 

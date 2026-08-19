@@ -3,10 +3,10 @@
 # Creates a GitHub release every time main is pushed to - directly, or by
 # merging a pull request - as long as the change is more than docs, chore,
 # ci, style or test tweaks. Publishing the result is somebody else's job:
-# creating the release fires publish-docker.yml and publish-packagist.yml,
-# which react to the release being published rather than to anything in this
-# file, so either can succeed, fail or queue independently of the other and
-# of this workflow.
+# creating the release fires publish-ghcr.yml, publish-dockerhub.yml and
+# publish-packagist.yml, which react to the release being published rather
+# than to anything in this file, so any of the three can succeed, fail or
+# queue independently of the others and of this workflow.
 #
 # ---------------------------------------------------------------------------
 # CURRENTLY DISABLED. Every job is gated on the repository variable
@@ -19,10 +19,10 @@
 #
 #   RELEASE_ENABLED     variable   `true`, or every job skips
 #
-# (Docker Hub and Packagist credentials live in, and are read by,
-# publish-docker.yml and publish-packagist.yml instead - this workflow only
-# ever needs the implicit GITHUB_TOKEN, to push the tag and create the
-# release.)
+# (Docker Hub, GHCR and Packagist credentials live in, and are read by,
+# publish-ghcr.yml, publish-dockerhub.yml and publish-packagist.yml instead -
+# this workflow only ever needs the implicit GITHUB_TOKEN, to push the tag
+# and create the release.)
 #
 # How the version is decided:
 #
