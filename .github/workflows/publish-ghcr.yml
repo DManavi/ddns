@@ -154,6 +154,14 @@ jobs:
 
       # `dev` is the last stage in the Dockerfile, so the target has to be
       # named explicitly or this would publish the development image.
+      #
+      # The runtime stage is never taken from the cache. Its `apk upgrade` is
+      # what brings in Alpine's security fixes, and a cached layer would carry
+      # the packages of whichever build made it first - often CI's, days
+      # earlier, and not necessarily the same build for both architectures,
+      # since every build here and in CI replaces the one cache index they
+      # share. The vendor stage still caches; composer.lock fixes what it
+      # produces.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -161,6 +169,7 @@ jobs:
           target: runtime
           platforms: linux/amd64,linux/arm64
           push: true
+          no-cache-filters: runtime
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.title=ddns

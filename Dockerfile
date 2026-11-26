@@ -48,9 +48,19 @@ FROM php:8.3.37-cli-alpine AS runtime
 #
 # Alpine drops superseded package versions from its repositories quickly, so
 # pinning them makes builds fail over time rather than making them reproducible.
-# The base image tag is the pin that matters.
+# The base image tag pins PHP; the packages around it are whatever its Alpine
+# branch has fixed by the time a release is built.
+#
+# The upgrade is for the libraries PHP links against. The PHP image is rebuilt
+# for PHP and Alpine releases, not for every Alpine security fix in between, so
+# its libxml2, OpenSSL and the rest can trail the 3.24 repositories. Upgrading
+# within the image's own Alpine branch brings those fixes without the ABI
+# changes of a newer one. A cached copy of this layer would bring back the
+# packages of whichever build first made it, so the publish workflows build
+# this stage without the cache; see `no-cache-filters` there.
 # hadolint ignore=DL3018
-RUN docker-php-ext-install pcntl \
+RUN apk upgrade --no-cache \
+    && docker-php-ext-install pcntl \
     && apk add --no-cache curl \
     && rm -rf /var/cache/apk/*
 
