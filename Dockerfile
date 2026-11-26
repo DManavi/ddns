@@ -36,7 +36,12 @@ RUN set -eux; \
     fi
 
 # --------------------------------------------------------------------- runtime
-FROM php:8.3-cli-alpine AS runtime
+# Pinned to a patch release, so the PHP an image ships is in the diff rather
+# than whatever `8.3` pointed at on the day it was built. Published images are
+# only ever built from a release tag, so a PHP security bump here has to be
+# committed as `fix(docker)`: a `chore` merges without releasing, and every
+# published tag keeps the vulnerable PHP.
+FROM php:8.3.37-cli-alpine AS runtime
 
 # `pcntl` is what gives `ddns watch` a graceful shutdown when the container is
 # stopped; without it SIGTERM kills the process mid-update.
