@@ -208,6 +208,10 @@ route secrets to `.env`.
 - **Azure public and private DNS differ in JSON casing** (`TTL`/`ARecords`
   versus `ttl`/`aRecords`). The wrong casing is *accepted* and silently stores
   an empty record set — there is no error to catch.
+- **A PHP security release reaches nobody until a release rebuilds the
+  images.** The runtime base in the `Dockerfile` is pinned to a PHP patch
+  version; bump it as `fix(docker)`. Committed as `chore`, the bump merges
+  without releasing and every published tag keeps the vulnerable PHP.
 - **Verify an edit actually landed.** Some tooling masks credential-like strings
   when displaying files, so text copied from a rendered view may not match what
   is on disk, and a replacement can no-op silently. Grep for the result.
