@@ -212,6 +212,8 @@ route secrets to `.env`.
   images.** The runtime base in the `Dockerfile` is pinned to a PHP patch
   version; bump it as `fix(docker)`. Committed as `chore`, the bump merges
   without releasing and every published tag keeps the vulnerable PHP.
+  Dependabot (`.github/dependabot.yml`) proposes each new 8.3 patch release
+  already prefixed that way; merging its pull request is what ships it.
 - **Verify an edit actually landed.** Some tooling masks credential-like strings
   when displaying files, so text copied from a rendered view may not match what
   is on disk, and a replacement can no-op silently. Grep for the result.

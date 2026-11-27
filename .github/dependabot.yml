@@ -1,0 +1,29 @@
+# Version updates for the PHP base image the Dockerfile pins, which nothing
+# else would notice moving. Composer packages are pinned and audited instead -
+# see the README's Dependencies section.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: daily
+    # Only php, and only 8.3 patch releases. A new minor version is a decision
+    # rather than an update, and composer:2 never reaches a published image.
+    allow:
+      - dependency-name: php
+    ignore:
+      - dependency-name: php
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    # Version updates otherwise wait three days after a release, which for a
+    # PHP security release is three more days of a vulnerable image. One day
+    # is the shortest GitHub accepts. The pull request still has to pass CI,
+    # which builds the image and runs the suite in it, and still has to be
+    # merged by hand.
+    cooldown:
+      default-days: 1
+    # A fix, so that merging the pull request is what releases it - see
+    # AGENTS.md. Dependabot adds the colon itself.
+    commit-message:
+      prefix: fix(docker)
