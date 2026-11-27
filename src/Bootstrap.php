@@ -23,7 +23,7 @@ final class Bootstrap
      * document. Lives here because both front-ends need it and neither should
      * have to import the other.
      */
-    public const VERSION = '1.20260820.0444';
+    public const VERSION = '1.20261127.0009';
 
     /**
      * Where the configuration is looked for, relative to the project root.
